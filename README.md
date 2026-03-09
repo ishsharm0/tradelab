@@ -1,11 +1,12 @@
+<img src="https://i.imgur.com/HGvvQbq.png" width="500" alt="tradelab logo"/>
+
 # tradelab
 
 `tradelab` is a candle-based backtesting toolkit for Node.js. It is built for two use cases:
-
 - you already have candles and want a solid execution/backtest engine
 - you want to fetch Yahoo Finance data or import CSVs and backtest with minimal setup
 
-The package stays focused on historical research. It does not try to be a broker adapter or a live trading framework.
+The package stays focused on historical research and testing, and is not trying to be a broker adapter or a live trading framework. 
 
 ## Features
 
