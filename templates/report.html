@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{TITLE}} backtest</title>
+    <style>{{CSS}}</style>
+  </head>
+  <body>
+    <main class="report-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Trading Engine Report</p>
+          <h1>{{TITLE}} backtest</h1>
+          <p class="hero-subtitle">{{HERO_SUBTITLE}}</p>
+        </div>
+        <div class="hero-pill">{{HERO_PILL}}</div>
+      </header>
+
+      <section class="metric-grid">
+        {{METRIC_CARDS}}
+      </section>
+
+      <section class="panel-grid">
+        <article class="panel panel--wide">
+          <div class="panel-heading">
+            <h2>Equity Curve</h2>
+            <p>Realized equity through the run.</p>
+          </div>
+          <div id="equity-chart" class="chart"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Summary</h2>
+            <p>Headline stats for completed positions.</p>
+          </div>
+          <table class="data-table">
+            <tbody>{{SUMMARY_ROWS}}</tbody>
+          </table>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Drawdown</h2>
+            <p>Peak-to-trough decline on realized equity.</p>
+          </div>
+          <div id="drawdown-chart" class="chart"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Daily PnL</h2>
+            <p>Per-day realized performance.</p>
+          </div>
+          <div id="daily-chart" class="chart"></div>
+        </article>
+
+        <article class="panel panel--wide {{REPLAY_VISIBILITY}}">
+          <div class="panel-heading">
+            <h2>Executions</h2>
+            <p>Replay frames reduced to a clean price-and-fills view.</p>
+          </div>
+          <div id="replay-chart" class="chart"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Breakdown</h2>
+            <p>Long/short split and distribution snapshots.</p>
+          </div>
+          <table class="data-table">
+            <tbody>{{BREAKDOWN_ROWS}}</tbody>
+          </table>
+        </article>
+
+        <article class="panel panel--wide">
+          <div class="panel-heading">
+            <h2>Recent Positions</h2>
+            <p>Last 25 completed positions.</p>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table data-table--positions">
+              <thead>
+                <tr>
+                  <th>Opened</th>
+                  <th>Side</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>Reason</th>
+                  <th>PnL</th>
+                  <th>MFE / MAE</th>
+                </tr>
+              </thead>
+              <tbody>{{POSITION_ROWS}}</tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script id="report-data" type="application/json">{{REPORT_DATA_JSON}}</script>
+    <script src="{{PLOTLY_CDN_URL}}"></script>
+    <script>{{REPORT_JS}}</script>
+  </body>
+</html>
