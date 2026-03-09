@@ -1,55 +1,61 @@
-<img src="https://i.imgur.com/HGvvQbq.png" width="500" alt="tradelab logo"/>
+<div align="center">
+  <img src="https://i.imgur.com/HGvvQbq.png" width="420" alt="tradelab logo" />
 
-# tradelab
+  <p><strong>A Node.js backtesting toolkit for serious trading strategy research.</strong></p>
 
-`tradelab` is a Node.js backtesting toolkit for trading strategy research. It lets you:
-- load candles from Yahoo Finance or CSV
-- run candle-based backtests with sizing, exits, and risk controls
-- export trades, metrics, and HTML reports
+  [![npm version](https://img.shields.io/npm/v/tradelab?color=0f172a&label=npm&logo=npm)](https://www.npmjs.com/package/tradelab)
+  [![GitHub](https://img.shields.io/badge/github-ishsharm0/tradelab-0f172a?logo=github)](https://github.com/ishsharm0/tradelab)
+  [![License: MIT](https://img.shields.io/badge/license-MIT-0f172a)](https://github.com/ishsharm0/tradelab/blob/main/LICENSE)
+  [![Node.js](https://img.shields.io/badge/node-%3E%3D18-0f172a?logo=node.js)](https://nodejs.org)
+  [![TypeScript](https://img.shields.io/badge/TypeScript-ready-0f172a?logo=typescript)](https://github.com/ishsharm0/tradelab/blob/main/types/index.d.ts)
 
-The package is modular by design, so you can use just the parts you need: data loading, backtesting, reporting, or the utility layer on its own.
+</div>
 
-It is built for historical research and testing, not broker connectivity or live trading.
+---
 
-## Features
+**tradelab** handles the simulation, sizing, exits, costs, and result exports — you bring the candles and signal logic.
 
-- Modular structure: use the full workflow or just the engine, data layer, reporting, or helpers
-- Backtest engine with pending entries, OCO exits, scale-outs, pyramiding, cooldowns, daily loss limits, optional replay/equity capture, and configurable slippage/commission modeling
-- Historical data loading from Yahoo Finance, with local caching to avoid repeated downloads
-- CSV import for common OHLCV formats and custom column mappings
-- Position-level and leg-level metrics, including drawdown, expectancy, hold-time stats, and side breakdowns
-- Multi-symbol portfolio aggregation and rolling walk-forward optimization helpers
-- HTML report export, metrics JSON export, and trade CSV export
-- Utility indicators and session helpers for strategy development
-- CLI entrypoint for fetching data and running quick backtests from the terminal
-- TypeScript definitions for the public API
-
-## Installation
+It works cleanly for a single-strategy backtest and scales up to portfolio runs, walk-forward testing, and detailed execution modeling. It is not a broker connector or a live trading tool.
 
 ```bash
 npm install tradelab
 ```
 
-Node `18+` is required.
+---
 
-## Importing
+## Table of contents
 
+- [What it includes](#what-it-includes)
+- [Quick start](#quick-start)
+- [Loading historical data](#loading-historical-data)
+- [Core concepts](#core-concepts)
+- [Portfolio mode](#portfolio-mode)
+- [Walk-forward optimization](#walk-forward-optimization)
+- [Execution and cost modeling](#execution-and-cost-modeling)
+- [Exports and reporting](#exports-and-reporting)
+- [CLI](#cli)
+- [Examples](#examples)
+- [Documentation](#documentation)
 
-### ESM (recommended)
+---
 
-```js
-import { backtest, getHistoricalCandles, ema } from "tradelab";
-import { fetchHistorical } from "tradelab/data";
-```
+## What it includes
 
-### CommonJS
+| Area | What you get |
+|---|---|
+| **Engine** | Candle-based backtests with position sizing, exits, risk controls, replay capture |
+| **Portfolio** | Multi-symbol aggregation with weight-based capital allocation |
+| **Walk-forward** | Rolling train/test validation with parameter search |
+| **Data** | Yahoo Finance downloads, CSV import, and local cache helpers |
+| **Costs** | Slippage, spread, and commission modeling |
+| **Exports** | HTML reports, metrics JSON, and trade CSV |
+| **Dev experience** | TypeScript definitions, ESM/CJS support, CLI for quick runs |
 
-```js
-const { backtest, getHistoricalCandles, ema } = require("tradelab");
-const { fetchHistorical } = require("tradelab/data");
-```
+---
 
-## Quick Start
+## Quick start
+
+If you already have candles, `backtest()` is the main entry point.
 
 ```js
 import { backtest, ema, exportBacktestArtifacts } from "tradelab";
@@ -75,29 +81,23 @@ const result = backtest({
       const risk = entry - stop;
       if (risk <= 0) return null;
 
-      return {
-        side: "long",
-        entry,
-        stop,
-        rr: 2,
-      };
+      return { side: "long", entry, stop, rr: 2 };
     }
 
     return null;
   },
 });
 
-exportBacktestArtifacts({
-  result,
-  outDir: "./output",
-});
+exportBacktestArtifacts({ result, outDir: "./output" });
 ```
 
-## Getting Historical Data
+After the run, check `result.metrics` for the headline numbers and `result.positions` for the trade log.
 
-The simplest entry point is `getHistoricalCandles()`. For most users, it is the only data-loading function you need.
+---
 
-### Yahoo Finance
+## Loading historical data
+
+Most users can start with `getHistoricalCandles()`. It abstracts over Yahoo Finance and CSV, handles caching, and normalizes the output so it feeds straight into `backtest()`.
 
 ```js
 import { getHistoricalCandles, backtest } from "tradelab";
@@ -107,119 +107,224 @@ const candles = await getHistoricalCandles({
   symbol: "SPY",
   interval: "1d",
   period: "2y",
-  cache: true,
+  cache: true,       // reuses local copy on repeated runs
 });
 
-const result = backtest({
-  candles,
-  symbol: "SPY",
-  interval: "1d",
-  range: "2y",
-  signal,
-});
+const result = backtest({ candles, symbol: "SPY", interval: "1d", range: "2y", signal });
 ```
 
-Supported period examples: `5d`, `60d`, `6mo`, `1y`.
+**Supported sources:** `yahoo` · `csv` · `auto`
 
-### CSV
+**Supported periods:** `5d` · `60d` · `6mo` · `1y` · `2y` · and more
+
+Use `cache: true` for repeatable research runs. It eliminates network noise and makes failures easier to diagnose.
+
+### CSV import
 
 ```js
-import { getHistoricalCandles } from "tradelab";
-
 const candles = await getHistoricalCandles({
   source: "csv",
-  symbol: "BTC-USD",
-  interval: "5m",
-  csvPath: "./data/btc-5m.csv",
+  csvPath: "./data/spy.csv",
   csv: {
-    timeCol: "time",
+    timeCol: "timestamp",
     openCol: "open",
-    highCol: "high",
-    lowCol: "low",
-    closeCol: "close",
-    volumeCol: "volume",
+    // ... optional column mapping
   },
 });
 ```
 
-If you pass `csvPath` and omit `source`, the loader will auto-detect CSV mode.
+If your CSV already uses standard OHLCV column names, no mapping is needed at all.
 
-## Signal Contract
+---
 
-Your strategy function receives:
+## Core concepts
+
+### The signal function
+
+Your signal function is called on every bar. Return `null` to skip, or a signal object to open a trade.
 
 ```js
-{
-  candles,      // history through the current bar
-  index,        // current index in the original candle array
-  bar,          // current candle
-  equity,       // realized equity
-  openPosition, // null or current position
-  pendingOrder  // null or current pending entry
+signal({ candles, index, bar, equity, openPosition, pendingOrder }) {
+  // return null to skip
+  // return a signal to enter
+  return {
+    side: "long",      // "long" | "short" | "buy" | "sell"
+    entry: bar.close,  // defaults to current close if omitted
+    stop: bar.close - 2,
+    rr: 2,             // target = entry + (entry - stop) * rr
+  };
 }
 ```
 
-Return `null` for no trade, or a signal object:
+The minimum viable signal is just `side`, `stop`, and `rr`. Start there and add fields only when the strategy actually needs them.
+
+### Key backtest options
+
+| Option | Purpose |
+|---|---|
+| `equity` | Starting equity (default `10000`) |
+| `riskPct` | Percent of equity risked per trade |
+| `warmupBars` | Bars skipped before signal evaluation starts |
+| `flattenAtClose` | Forces end-of-day exit when enabled |
+| `costs` | Slippage, spread, and commission model |
+| `strict` | Throws on lookahead access |
+| `collectEqSeries` | Enables equity curve output |
+| `collectReplay` | Enables visualization payload |
+
+### Result shape
 
 ```js
 {
-  side: "long" | "short",
-  entry: Number,
-  stop: Number,
-  takeProfit: Number
+  symbol, interval, range,
+  trades,     // every realized leg, including partial exits
+  positions,  // completed positions — start here for analysis
+  metrics,    // winRate, profitFactor, maxDrawdown, sharpe, ...
+  eqSeries,   // [{ time, timestamp, equity }] — equity curve
+  replay,     // visualization frames and events
 }
 ```
 
-Quality-of-life behavior:
+**First checks after any run:**
 
-- `side` also accepts `buy` and `sell`
-- `entry` can be omitted and will default to the current bar close
-- `takeProfit` can be omitted if `rr` or `_rr` is provided
-- `qty` or `size` can override risk-based sizing
-- `riskPct` or `riskFraction` can override the global risk setting per signal
-- `strict: true` throws if the strategy directly accesses candles beyond the current index
+- `metrics.trades` — enough sample size to trust the numbers?
+- `metrics.profitFactor` — do winners beat losers gross of costs?
+- `metrics.maxDrawdown` — is the equity path survivable?
+- `metrics.sideBreakdown` — does one side carry the whole result?
 
-Optional engine hints:
+---
 
-- `_entryExpiryBars`
-- `_cooldownBars`
-- `_breakevenAtR`
-- `_trailAfterR`
-- `_maxBarsInTrade`
-- `_maxHoldMin`
-- `_rr`
-- `_initRisk`
-- `_imb`
+## Portfolio mode
 
-## Result Shape
+Use `backtestPortfolio()` when you have one candle array per symbol and want a single combined result.
 
-`backtest()` returns:
+```js
+import { backtestPortfolio } from "tradelab";
 
-- `trades`: every realized leg, including scale-outs
-- `positions`: completed positions only
-- `metrics`: aggregate stats including `winRate`, `expectancy`, `profitFactor`, `maxDrawdown`, `sharpe`, `avgHold`, and `sideBreakdown`
-- `eqSeries`: realized equity history as `{ time, timestamp, equity }`
-- `replay`: chart-friendly frame and event data
+const result = backtestPortfolio({
+  equity: 100_000,
+  systems: [
+    { symbol: "SPY", candles: spy, signal: signalA, weight: 2 },
+    { symbol: "QQQ", candles: qqq, signal: signalB, weight: 1 },
+  ],
+});
+```
 
-## Main Exports
+Capital is allocated up front by weight. Each system runs through the normal single-symbol engine, and the portfolio result merges trades, positions, replay events, and the equity series.
 
-- `backtest(options)`
-- `backtestPortfolio({ systems, equity })`
-- `walkForwardOptimize({ candles, signalFactory, parameterSets, trainBars, testBars })`
-- `backtestHistorical({ data, backtestOptions })`
-- `getHistoricalCandles(options)`
-- `fetchHistorical(symbol, interval, period)`
-- `loadCandlesFromCSV(filePath, options)`
-- `saveCandlesToCache(candles, meta)`
-- `loadCandlesFromCache(symbol, interval, period, outDir)`
-- `exportMetricsJSON({ result, outDir })`
-- `exportBacktestArtifacts({ result, outDir })`
+---
 
-## Reports
+## Walk-forward optimization
 
-The HTML report is self-contained apart from the Plotly CDN script. Report markup, CSS, and client-side chart code live under `templates/`.
+Use `walkForwardOptimize()` when one in-sample backtest is not enough. It runs rolling train/test windows across the full candle history.
 
-Export helpers default CSV output to completed positions. Use `csvSource: "trades"` if you want every realized leg in the CSV.
+```js
+import { walkForwardOptimize } from "tradelab";
+
+const wf = walkForwardOptimize({
+  candles,
+  trainBars: 180,
+  testBars: 60,
+  stepBars: 60,
+  scoreBy: "profitFactor",
+  parameterSets: [
+    { fast: 8,  slow: 21, rr: 2 },
+    { fast: 10, slow: 30, rr: 2 },
+  ],
+  signalFactory(params) {
+    return createSignalFromParams(params);
+  },
+});
+```
+
+Each window picks the best parameter set in training, then runs it blind on the test slice. The `windows` array in the result shows per-window winners. If the winning parameters swing wildly from window to window, that is a real signal — not a formatting detail.
+
+---
+
+## Execution and cost modeling
+
+```js
+const result = backtest({
+  candles,
+  signal,
+  costs: {
+    slippageBps: 2,
+    spreadBps: 1,
+    slippageByKind: {
+      market: 3,
+      limit: 0.5,
+      stop: 4,
+    },
+    commissionBps: 1,
+    commissionPerUnit: 0,
+    commissionPerOrder: 1,
+    minCommission: 1,
+  },
+});
+```
+
+- Slippage is applied in the trade direction
+- Spread is modeled as half-spread paid on entry and exit
+- Commission can be percentage-based, per-unit, per-order, or mixed
+- `minCommission` floors the fee per fill
+
+> Leaving costs at zero is the most common cause of inflated backtests. Set them from the start.
+
+---
+
+## Exports and reporting
+
+```js
+import { exportBacktestArtifacts } from "tradelab";
+
+// Writes HTML report + trade CSV + metrics JSON in one call
+exportBacktestArtifacts({ result, outDir: "./output" });
+```
+
+Or use the narrower helpers:
+
+| Helper | Output |
+|---|---|
+| `exportHtmlReport(options)` | Interactive HTML report written to disk |
+| `renderHtmlReport(options)` | HTML report returned as a string |
+| `exportTradesCsv(trades, options)` | Flat trade ledger for spreadsheets or pandas |
+| `exportMetricsJSON(options)` | Machine-readable metrics for dashboards or automation |
+
+For programmatic pipelines, `exportMetricsJSON` is usually the most useful format to build on.
+
+---
+
+## CLI
+
+The package ships a `tradelab` binary. Best for quick iteration, smoke tests, and trying the package before wiring it into application code.
+
+```bash
+# Backtest from Yahoo
+npx tradelab backtest --source yahoo --symbol SPY --interval 1d --period 1y
+
+# Backtest from CSV with a built-in strategy
+npx tradelab backtest --source csv --csvPath ./data/btc.csv --strategy buy-hold --holdBars 3
+
+# Multi-symbol portfolio
+npx tradelab portfolio \
+  --csvPaths ./data/spy.csv,./data/qqq.csv \
+  --symbols SPY,QQQ \
+  --strategy buy-hold
+
+# Walk-forward validation
+npx tradelab walk-forward \
+  --source yahoo --symbol QQQ --interval 1d --period 2y \
+  --trainBars 180 --testBars 60
+
+# Prefetch and cache data
+npx tradelab prefetch --symbol SPY --interval 1d --period 1y
+npx tradelab import-csv --csvPath ./data/spy.csv --symbol SPY --interval 1d
+```
+
+**Built-in strategies:** `ema-cross` · `buy-hold`
+
+You can also point `--strategy` at a local module that exports `default(args)`, `createSignal(args)`, or `signal`.
+
+---
 
 ## Examples
 
@@ -228,17 +333,51 @@ node examples/emaCross.js
 node examples/yahooEmaCross.js SPY 1d 1y
 ```
 
-## CLI
+The examples are a good place to start if you want something runnable before wiring the package into your own strategy code.
 
-```bash
-npx tradelab backtest --source yahoo --symbol SPY --interval 1d --period 1y
-npx tradelab backtest --source csv --csvPath ./data/btc.csv --strategy buy-hold --holdBars 3
-npx tradelab walk-forward --source yahoo --symbol QQQ --interval 1d --period 2y --trainBars 180 --testBars 60
+---
+
+## Importing
+
+### ESM
+
+```js
+import { backtest, getHistoricalCandles, ema } from "tradelab";
+import { fetchHistorical } from "tradelab/data";
 ```
+
+### CommonJS
+
+```js
+const { backtest, getHistoricalCandles, ema } = require("tradelab");
+const { fetchHistorical } = require("tradelab/data");
+```
+
+---
+
+## Documentation
+
+| Guide | What it covers |
+|---|---|
+| [Backtest engine](docs/backtest-engine.md) | Signal contract, all options, result shape, portfolio mode, walk-forward |
+| [Data, reporting, and CLI](docs/data-reporting-cli.md) | Data loading, cache behavior, exports, CLI reference |
+| [API reference](docs/api-reference.md) | Compact index of every public export |
+
+---
+
+## Common mistakes
+
+- Using unsorted candles or mixed intervals in a single series
+- Reading `trades` as if they were always full positions — use `positions` for top-line analysis
+- Leaving costs at zero and overestimating edge
+- Trusting one backtest without out-of-sample validation
+- Debugging a strategy with `strict: false` when lookahead is possible
+
+---
 
 ## Notes
 
-- Yahoo downloads can be cached under `output/data` by default.
-- The engine is intended for historical research, not brokerage execution.
-- File output only happens through the reporting and cache helpers.
-- CommonJS and ESM are both supported.
+- Node `18+` is required
+- Yahoo downloads are cached under `output/data` by default
+- CommonJS and ESM are both supported
+- The engine is built for historical research — not brokerage execution, tick-level simulation, or exchange microstructure modeling
