@@ -1,18 +1,55 @@
 import { minutesET } from "../utils/time.js";
 
-export function applyFill(
-  price,
-  side,
-  { slippageBps = 0, feeBps = 0, kind = "market" } = {}
-) {
+function resolveSlippageBps(kind, slippageBps, slippageByKind) {
+  if (Number.isFinite(slippageByKind?.[kind])) {
+    return slippageByKind[kind];
+  }
+
   let effectiveSlippageBps = slippageBps;
   if (kind === "limit") effectiveSlippageBps *= 0.25;
   if (kind === "stop") effectiveSlippageBps *= 1.25;
+  return effectiveSlippageBps;
+}
 
-  const slippage = (effectiveSlippageBps / 10000) * price;
+export function applyFill(
+  price,
+  side,
+  { slippageBps = 0, feeBps = 0, kind = "market", qty = 0, costs = {} } = {}
+) {
+  const model = costs || {};
+  const modelSlippageBps = Number.isFinite(model.slippageBps)
+    ? model.slippageBps
+    : slippageBps;
+  const modelFeeBps = Number.isFinite(model.commissionBps)
+    ? model.commissionBps
+    : feeBps;
+  const effectiveSlippageBps = resolveSlippageBps(
+    kind,
+    modelSlippageBps,
+    model.slippageByKind
+  );
+  const halfSpreadBps = Number.isFinite(model.spreadBps)
+    ? model.spreadBps / 2
+    : 0;
+
+  const slippage = ((effectiveSlippageBps + halfSpreadBps) / 10000) * price;
   const filledPrice = side === "long" ? price + slippage : price - slippage;
-  const feePerUnit = (feeBps / 10000) * Math.abs(filledPrice);
-  return { price: filledPrice, fee: feePerUnit };
+  const variableFeePerUnit =
+    ((modelFeeBps || 0) / 10000) * Math.abs(filledPrice) +
+    (Number.isFinite(model.commissionPerUnit) ? model.commissionPerUnit : 0);
+  const variableFeeTotal = variableFeePerUnit * Math.max(0, qty);
+  const fixedFeeTotal = Number.isFinite(model.commissionPerOrder)
+    ? model.commissionPerOrder
+    : 0;
+  const grossFeeTotal = variableFeeTotal + fixedFeeTotal;
+  const feeTotal = Math.max(
+    Number.isFinite(model.minCommission) ? model.minCommission : 0,
+    grossFeeTotal
+  );
+  const feePerUnit =
+    qty > 0 ? feeTotal / qty : variableFeePerUnit;
+
+  return { price: filledPrice, fee: feePerUnit, feeTotal };
 }
 
 export function clampStop(marketPrice, proposedStop, side, oco) {

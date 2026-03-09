@@ -4,7 +4,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { exportHtmlReport, renderHtmlReport } from "../src/index.js";
+import {
+  exportHtmlReport,
+  exportMetricsJSON,
+  renderHtmlReport,
+} from "../src/index.js";
 
 function sampleMetrics() {
   return {
@@ -69,4 +73,24 @@ test("exportHtmlReport writes a self-contained report file", () => {
   assert.equal(fs.existsSync(outputPath), true);
   const html = fs.readFileSync(outputPath, "utf8");
   assert.match(html, /DEMO 1d \(1y\) backtest/);
+});
+
+test("exportMetricsJSON writes machine-readable metrics", () => {
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "trading-engine-metrics-"));
+  const result = {
+    symbol: "DEMO",
+    interval: "1d",
+    range: "1y",
+    metrics: sampleMetrics(),
+  };
+
+  const outputPath = exportMetricsJSON({
+    result,
+    outDir,
+  });
+
+  assert.equal(fs.existsSync(outputPath), true);
+  const parsed = JSON.parse(fs.readFileSync(outputPath, "utf8"));
+  assert.equal(parsed.trades, 3);
+  assert.equal(parsed.startEquity, 1000);
 });

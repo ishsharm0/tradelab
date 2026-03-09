@@ -1,9 +1,14 @@
 {
   "name": "tradelab",
-  "version": "0.1.0",
-  "description": "Reusable trading and backtesting engine for candle-based strategies",
+  "version": "0.3.0",
+  "description": "Backtesting toolkit for Node.js with strategy simulation, historical data loading, and report generation",
   "type": "module",
-  "main": "./src/index.js",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "bin": {
+    "tradelab": "./bin/tradelab.js"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -18,18 +23,32 @@
   },
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.js",
-    "./data": "./src/data/index.js",
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js",
+      "require": "./dist/cjs/index.cjs"
+    },
+    "./data": {
+      "types": "./types/data.d.ts",
+      "import": "./src/data/index.js",
+      "require": "./dist/cjs/data.cjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
+    "bin",
+    "dist",
     "src",
+    "types",
     "templates",
     "examples/*.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
+    "build": "node scripts/build-cjs.mjs",
+    "prepare": "npm run build",
+    "prepack": "npm run build",
     "test": "node --test"
   },
   "keywords": [
@@ -37,9 +56,16 @@
     "backtesting",
     "algorithmic-trading",
     "ohlcv",
-    "quant"
+    "quant",
+    "quantitative-finance",
+    "yahoo-finance",
+    "trading-strategy",
+    "market-data"
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.3"
   }
 }

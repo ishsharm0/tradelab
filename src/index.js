@@ -1,4 +1,6 @@
 export { backtest } from "./engine/backtest.js";
+export { backtestPortfolio } from "./engine/portfolio.js";
+export { walkForwardOptimize } from "./engine/walkForward.js";
 
 export { buildMetrics } from "./metrics/buildMetrics.js";
 export {
@@ -20,6 +22,7 @@ export {
   exportHtmlReport,
 } from "./reporting/renderHtmlReport.js";
 export { exportTradesCsv } from "./reporting/exportTradesCsv.js";
+export { exportMetricsJSON } from "./reporting/exportMetricsJson.js";
 export { exportBacktestArtifacts } from "./reporting/exportBacktestArtifacts.js";
 
 export {

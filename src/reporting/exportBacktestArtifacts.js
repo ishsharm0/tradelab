@@ -1,4 +1,5 @@
 import { exportHtmlReport } from "./renderHtmlReport.js";
+import { exportMetricsJSON } from "./exportMetricsJson.js";
 import { exportTradesCsv } from "./exportTradesCsv.js";
 
 export function exportBacktestArtifacts({
@@ -9,6 +10,7 @@ export function exportBacktestArtifacts({
   outDir = "output",
   exportCsv = true,
   exportHtml = true,
+  exportMetrics = true,
   csvSource = "positions",
   plotlyCdnUrl,
 } = {}) {
@@ -19,6 +21,7 @@ export function exportBacktestArtifacts({
   const outputs = {
     csv: null,
     html: null,
+    metrics: null,
   };
 
   const csvTrades =
@@ -46,6 +49,16 @@ export function exportBacktestArtifacts({
       positions: result.positions ?? [],
       outDir,
       plotlyCdnUrl,
+    });
+  }
+
+  if (exportMetrics) {
+    outputs.metrics = exportMetricsJSON({
+      result,
+      symbol,
+      interval,
+      range,
+      outDir,
     });
   }
 

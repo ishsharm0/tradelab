@@ -48,3 +48,23 @@ test("fetchHistorical accepts month-style periods and normalizes Yahoo data", as
     globalThis.fetch = originalFetch;
   }
 });
+
+test("fetchHistorical surfaces a clear Yahoo fallback message after retries", async () => {
+  const originalFetch = globalThis.fetch;
+  let attempts = 0;
+
+  globalThis.fetch = async () => {
+    attempts += 1;
+    throw new Error("fetch failed");
+  };
+
+  try {
+    await assert.rejects(
+      () => fetchHistorical("SPY", "1d", "6mo"),
+      /Unable to reach Yahoo Finance.*CSV\/cache workflow/
+    );
+    assert.equal(attempts, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

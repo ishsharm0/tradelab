@@ -19,6 +19,29 @@ function asNumber(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function equityPoint(time, equity) {
+  return { time, timestamp: time, equity };
+}
+
+function isArrayIndexKey(property) {
+  if (typeof property !== "string") return false;
+  const numeric = Number(property);
+  return Number.isInteger(numeric) && numeric >= 0;
+}
+
+function strictHistoryView(candles, currentIndex) {
+  return new Proxy(candles, {
+    get(target, property, receiver) {
+      if (isArrayIndexKey(property) && Number(property) >= target.length) {
+        throw new Error(
+          `strict mode: signal() tried to access candles[${property}] beyond current index ${currentIndex}`
+        );
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
 function mergeOptions(options) {
   const normalizedRiskPct = Number.isFinite(options.riskFraction)
     ? options.riskFraction * 100
@@ -35,6 +58,7 @@ function mergeOptions(options) {
     warmupBars: options.warmupBars ?? 200,
     slippageBps: options.slippageBps ?? 1,
     feeBps: options.feeBps ?? 0,
+    costs: options.costs ?? null,
     scaleOutAtR: options.scaleOutAtR ?? 1,
     scaleOutFrac: options.scaleOutFrac ?? 0.5,
     finalTP_R: options.finalTP_R ?? 3,
@@ -88,6 +112,7 @@ function mergeOptions(options) {
     maxSlipROnFill: options.maxSlipROnFill ?? 0.4,
     collectEqSeries: options.collectEqSeries ?? true,
     collectReplay: options.collectReplay ?? true,
+    strict: options.strict ?? false,
   };
 }
 
@@ -135,6 +160,16 @@ function normalizeSignal(signal, bar, fallbackR) {
   };
 }
 
+/**
+ * Run a candle-based backtest.
+ *
+ * Returns raw realized trade legs in `trades`, completed positions in `positions`,
+ * aggregate `metrics`, realized equity points in `eqSeries`, and chart-ready
+ * replay data in `replay`.
+ *
+ * When `strict: true` is enabled, the `candles` array passed to `signal()` throws
+ * if the strategy tries to access bars beyond the current index.
+ */
 export function backtest(rawOptions) {
   const options = mergeOptions(rawOptions || {});
   const {
@@ -145,6 +180,7 @@ export function backtest(rawOptions) {
     signal,
     slippageBps,
     feeBps,
+    costs,
     scaleOutAtR,
     scaleOutFrac,
     finalTP_R,
@@ -168,6 +204,7 @@ export function backtest(rawOptions) {
     collectEqSeries,
     collectReplay,
     warmupBars,
+    strict,
   } = options;
 
   if (!Array.isArray(candles) || candles.length === 0) {
@@ -196,7 +233,7 @@ export function backtest(rawOptions) {
   const needAtr = atrTrailMult > 0 || volScale.enabled;
   const atrValues = needAtr ? atr(candles, atrSourcePeriod) : null;
 
-  const eqSeries = wantEqSeries ? [{ time: candles[0].time, equity: currentEquity }] : [];
+  const eqSeries = wantEqSeries ? [equityPoint(candles[0].time, currentEquity)] : [];
   const replayFrames = wantReplay ? [] : [];
   const replayEvents = wantReplay ? [] : [];
   let tradeIdCounter = 0;
@@ -209,7 +246,7 @@ export function backtest(rawOptions) {
 
   function recordFrame(bar) {
     if (wantEqSeries) {
-      eqSeries.push({ time: bar.time, equity: currentEquity });
+      eqSeries.push(equityPoint(bar.time, currentEquity));
     }
 
     if (wantReplay) {
@@ -223,20 +260,19 @@ export function backtest(rawOptions) {
     }
   }
 
-  function closeLeg({ openPos, qty, exitPx, exitFeePerUnit, time, reason }) {
+  function closeLeg({ openPos, qty, exitPx, exitFeeTotal = 0, time, reason }) {
     const direction = openPos.side === "long" ? 1 : -1;
     const entryFill = openPos.entryFill;
     const grossPnl = (exitPx - entryFill) * direction * qty;
     const entryFeePortion =
       (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
-    const exitFeeTotal = exitFeePerUnit * qty;
     const pnl = grossPnl - entryFeePortion - exitFeeTotal;
 
     currentEquity += pnl;
     dayPnl += pnl;
 
     if (wantEqSeries) {
-      eqSeries.push({ time, equity: currentEquity });
+      eqSeries.push(equityPoint(time, currentEquity));
     }
 
     const remaining = openPos.size - qty;
@@ -313,17 +349,19 @@ export function backtest(rawOptions) {
     if (!open) return;
 
     const exitSide = open.side === "long" ? "short" : "long";
-    const { price: filled, fee: exitFee } = applyFill(bar.close, exitSide, {
+    const { price: filled, feeTotal: exitFeeTotal } = applyFill(bar.close, exitSide, {
       slippageBps,
       feeBps,
       kind: "market",
+      qty: open.size,
+      costs,
     });
 
     closeLeg({
       openPos: open,
       qty: open.size,
       exitPx: filled,
-      exitFeePerUnit: exitFee,
+      exitFeeTotal,
       time: bar.time,
       reason,
     });
@@ -386,13 +424,15 @@ export function backtest(rawOptions) {
     const size = roundStep(rawSize, qtyStep);
     if (size < minQty) return false;
 
-    const { price: entryFill, fee: entryFee } = applyFill(
+    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(
       entryPrice,
       pending.side,
       {
         slippageBps,
         feeBps,
         kind: fillKind,
+        qty: size,
+        costs,
       }
     );
 
@@ -407,7 +447,7 @@ export function backtest(rawOptions) {
       size,
       openTime: bar.time,
       entryFill,
-      entryFeeTotal: entryFee * size,
+      entryFeeTotal,
       initSize: size,
       baseSize: size,
       _mfeR: 0,
@@ -570,16 +610,16 @@ export function backtest(rawOptions) {
           const cutQty = roundStep(open.size * volScale.cutFrac, qtyStep);
           if (cutQty >= minQty && cutQty < open.size) {
             const exitSide = open.side === "long" ? "short" : "long";
-            const { price: filled, fee: exitFee } = applyFill(
+            const { price: filled, feeTotal: exitFeeTotal } = applyFill(
               bar.close,
               exitSide,
-              { slippageBps, feeBps, kind: "market" }
+              { slippageBps, feeBps, kind: "market", qty: cutQty, costs }
             );
             closeLeg({
               openPos: open,
               qty: cutQty,
               exitPx: filled,
-              exitFeePerUnit: exitFee,
+              exitFeeTotal,
               time: bar.time,
               reason: "SCALE",
             });
@@ -614,13 +654,13 @@ export function backtest(rawOptions) {
           const baseSize = open.baseSize || open.initSize;
           const addQty = roundStep(baseSize * pyramiding.addFrac, qtyStep);
           if (addQty >= minQty) {
-            const { price: addFill, fee: addFee } = applyFill(
+            const { price: addFill, feeTotal: addFeeTotal } = applyFill(
               triggerPrice,
               open.side,
-              { slippageBps, feeBps, kind: "limit" }
+              { slippageBps, feeBps, kind: "limit", qty: addQty, costs }
             );
             const newSize = open.size + addQty;
-            open.entryFeeTotal += addFee * addQty;
+            open.entryFeeTotal += addFeeTotal;
             open.entryFill =
               (open.entryFill * open.size + addFill * addQty) / newSize;
             open.size = newSize;
@@ -648,18 +688,20 @@ export function backtest(rawOptions) {
 
         if (touched) {
           const exitSide = open.side === "long" ? "short" : "long";
-          const { price: filled, fee: exitFee } = applyFill(triggerPrice, exitSide, {
-            slippageBps,
-            feeBps,
-            kind: "limit",
-          });
           const qty = roundStep(open.size * scaleOutFrac, qtyStep);
           if (qty >= minQty && qty < open.size) {
+            const { price: filled, feeTotal: exitFeeTotal } = applyFill(triggerPrice, exitSide, {
+              slippageBps,
+              feeBps,
+              kind: "limit",
+              qty,
+              costs,
+            });
             closeLeg({
               openPos: open,
               qty,
               exitPx: filled,
-              exitFeePerUnit: exitFee,
+              exitFeeTotal,
               time: bar.time,
               reason: "SCALE",
             });
@@ -686,17 +728,19 @@ export function backtest(rawOptions) {
 
       if (hit) {
         const exitKind = hit === "TP" ? "limit" : "stop";
-        const { price: filled, fee: exitFee } = applyFill(px, exitSide, {
+        const { price: filled, feeTotal: exitFeeTotal } = applyFill(px, exitSide, {
           slippageBps,
           feeBps,
           kind: exitKind,
+          qty: open.size,
+          costs,
         });
         const localCooldown = open._cooldownBars || 0;
         closeLeg({
           openPos: open,
           qty: open.size,
           exitPx: filled,
-          exitFeePerUnit: exitFee,
+          exitFeeTotal,
           time: bar.time,
           reason: hit,
         });
@@ -783,8 +827,15 @@ export function backtest(rawOptions) {
     }
 
     if (!pending) {
+      if (strict && history.length !== index + 1) {
+        throw new Error(
+          `strict mode: signal() received ${history.length} candles at index ${index}`
+        );
+      }
+
+      const signalCandles = strict ? strictHistoryView(history, index) : history;
       const rawSignal = signal({
-        candles: history,
+        candles: signalCandles,
         index,
         bar,
         equity: currentEquity,

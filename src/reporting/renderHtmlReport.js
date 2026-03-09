@@ -1,18 +1,35 @@
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const packageRoot = path.join(__dirname, "..", "..");
 const templateCache = new Map();
 
-function readTemplate(relativePath) {
-  const absolutePath = path.join(packageRoot, relativePath);
-  if (!templateCache.has(absolutePath)) {
-    templateCache.set(absolutePath, fs.readFileSync(absolutePath, "utf8"));
+function candidateRoots() {
+  const roots = [];
+  let current = process.cwd();
+
+  while (true) {
+    roots.push(current);
+    roots.push(path.join(current, "node_modules", "tradelab"));
+
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
-  return templateCache.get(absolutePath);
+
+  return [...new Set(roots)];
+}
+
+function readTemplate(relativePath) {
+  for (const root of candidateRoots()) {
+    const absolutePath = path.join(root, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+
+    if (!templateCache.has(absolutePath)) {
+      templateCache.set(absolutePath, fs.readFileSync(absolutePath, "utf8"));
+    }
+    return templateCache.get(absolutePath);
+  }
+
+  throw new Error(`Could not locate template asset: ${relativePath}`);
 }
 
 function fmt(value, digits = 2) {

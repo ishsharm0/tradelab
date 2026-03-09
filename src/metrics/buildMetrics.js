@@ -127,6 +127,13 @@ function percentile(values, percentileRank) {
   return sorted[index];
 }
 
+/**
+ * Build aggregate backtest metrics for completed positions and realized trade legs.
+ *
+ * The returned object includes top-level aliases for commonly consumed fields such as
+ * `profitFactor`, `winRate`, `expectancy`, `maxDrawdown`, `sharpe`, `avgHold`,
+ * and `sideBreakdown`, while preserving the more specific legacy fields.
+ */
 export function buildMetrics({
   closed,
   equityStart,
@@ -252,33 +259,7 @@ export function buildMetrics({
     p90: percentile(holdDurationsMinutes, 0.9),
   };
 
-  return {
-    trades: completedTrades.length,
-    winRate: completedTrades.length ? winningTrades.length / completedTrades.length : 0,
-    profitFactor: profitFactorPositions,
-    expectancy,
-    totalR,
-    avgR,
-    sharpePerTrade,
-    sortinoPerTrade,
-    maxDrawdownPct: maxDrawdown,
-    calmar,
-    maxConsecWins: maxWin,
-    maxConsecLosses: maxLoss,
-    avgHoldMin,
-    exposurePct,
-    totalPnL: realizedPnL,
-    returnPct,
-    finalEquity: equityFinal,
-    startEquity: equityStart,
-    profitFactor_pos: profitFactorPositions,
-    profitFactor_leg: profitFactorLegs,
-    winRate_pos: completedTrades.length
-      ? winningTrades.length / completedTrades.length
-      : 0,
-    winRate_leg: legs.length ? winningLegs.length / legs.length : 0,
-    sharpeDaily,
-    sortinoDaily,
+  const sideBreakdown = {
     long: {
       trades: longTrades.length,
       winRate: longTrades.length
@@ -295,6 +276,41 @@ export function buildMetrics({
       avgPnL: mean(shortPnls),
       avgR: mean(shortRs),
     },
+  };
+
+  return {
+    trades: completedTrades.length,
+    winRate: completedTrades.length ? winningTrades.length / completedTrades.length : 0,
+    profitFactor: profitFactorPositions,
+    expectancy,
+    totalR,
+    avgR,
+    sharpe: sharpeDaily,
+    sharpePerTrade,
+    sortinoPerTrade,
+    maxDrawdown: maxDrawdown,
+    maxDrawdownPct: maxDrawdown,
+    calmar,
+    maxConsecWins: maxWin,
+    maxConsecLosses: maxLoss,
+    avgHold: avgHoldMin,
+    avgHoldMin,
+    exposurePct,
+    totalPnL: realizedPnL,
+    returnPct,
+    finalEquity: equityFinal,
+    startEquity: equityStart,
+    profitFactor_pos: profitFactorPositions,
+    profitFactor_leg: profitFactorLegs,
+    winRate_pos: completedTrades.length
+      ? winningTrades.length / completedTrades.length
+      : 0,
+    winRate_leg: legs.length ? winningLegs.length / legs.length : 0,
+    sharpeDaily,
+    sortinoDaily,
+    sideBreakdown,
+    long: sideBreakdown.long,
+    short: sideBreakdown.short,
     rDist: rDistribution,
     holdDistMin: holdDistribution,
     daily: {

@@ -174,7 +174,16 @@ async function fetchYahooChart(symbol, { period1, period2, interval, includePreP
   return candles;
 }
 
-async function fetchYahooChartWithRetry(symbol, params, maxRetries = 5) {
+function formatYahooFailureMessage(symbol, interval, period, error, attempts) {
+  const detail = String(error?.message || error || "unknown error");
+  return [
+    `Unable to reach Yahoo Finance for ${symbol} ${interval} ${period} after ${attempts} attempts.`,
+    `Last error: ${detail}`,
+    "Try again later, or fall back to a local CSV/cache workflow with getHistoricalCandles({ source: \"csv\", ... }) or loadCandlesFromCache(...).",
+  ].join(" ");
+}
+
+async function fetchYahooChartWithRetry(symbol, params, period, maxRetries = 3) {
   let lastError = null;
 
   for (let attempt = 0; attempt < maxRetries; attempt += 1) {
@@ -188,14 +197,20 @@ async function fetchYahooChartWithRetry(symbol, params, maxRetries = 5) {
 
       if (!isRetryable || attempt === maxRetries - 1) break;
 
-      const delay = isRateLimited
-        ? Math.min(30_000, 2_000 * 2 ** attempt)
-        : Math.min(10_000, 750 * (attempt + 1));
+      const delay = Math.min(12_000, 500 * 2 ** attempt);
       await sleep(delay);
     }
   }
 
-  throw lastError ?? new Error(`Failed to fetch Yahoo data for ${symbol}`);
+  throw new Error(
+    formatYahooFailureMessage(
+      symbol,
+      params.interval,
+      period,
+      lastError,
+      maxRetries
+    )
+  );
 }
 
 export async function fetchHistorical(symbol, interval = "5m", period = "60d", options = {}) {
@@ -207,12 +222,16 @@ export async function fetchHistorical(symbol, interval = "5m", period = "60d", o
   if (spanMs <= maxSpanMs) {
     const endSec = nowSec();
     const startSec = Math.max(0, endSec - msToSec(spanMs));
-    const candles = await fetchYahooChartWithRetry(symbol, {
-      period1: startSec,
-      period2: endSec,
-      interval: normalizedInterval,
-      includePrePost,
-    });
+    const candles = await fetchYahooChartWithRetry(
+      symbol,
+      {
+        period1: startSec,
+        period2: endSec,
+        interval: normalizedInterval,
+        includePrePost,
+      },
+      period
+    );
     return sanitizeBars(candles);
   }
 
@@ -223,12 +242,16 @@ export async function fetchHistorical(symbol, interval = "5m", period = "60d", o
   while (remainingMs > 0) {
     const takeMs = Math.min(remainingMs, maxSpanMs);
     const chunkStartMs = chunkEndMs - takeMs;
-    const candles = await fetchYahooChartWithRetry(symbol, {
-      period1: msToSec(chunkStartMs),
-      period2: msToSec(chunkEndMs),
-      interval: normalizedInterval,
-      includePrePost,
-    });
+    const candles = await fetchYahooChartWithRetry(
+      symbol,
+      {
+        period1: msToSec(chunkStartMs),
+        period2: msToSec(chunkEndMs),
+        interval: normalizedInterval,
+        includePrePost,
+      },
+      period
+    );
     chunks.push(...candles);
     chunkEndMs = chunkStartMs - 1000;
     remainingMs -= takeMs;
