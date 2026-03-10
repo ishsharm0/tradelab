@@ -142,24 +142,88 @@ export function buildMetrics({
   estBarMs,
   eqSeries,
 }) {
-  const completedTrades = closed.filter((trade) => trade.exit.reason !== "SCALE");
-  const winningTrades = completedTrades.filter((trade) => trade.exit.pnl > 0);
-  const losingTrades = completedTrades.filter((trade) => trade.exit.pnl < 0);
+  const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
+  const completedTrades = [];
+  const tradeRs = [];
+  const tradePnls = [];
+  const tradeReturns = [];
+  const holdDurationsMinutes = [];
+  const labels = [];
+  const longRs = [];
+  const shortRs = [];
+  let totalR = 0;
+  let realizedPnL = 0;
+  let winningTradeCount = 0;
+  let grossProfitPositions = 0;
+  let grossLossPositions = 0;
+  let grossProfitLegs = 0;
+  let grossLossLegs = 0;
+  let winningLegCount = 0;
+  let openBars = 0;
+  let longTradesCount = 0;
+  let longTradeWins = 0;
+  let longPnLSum = 0;
+  let shortTradesCount = 0;
+  let shortTradeWins = 0;
+  let shortPnLSum = 0;
 
-  const tradeRs = completedTrades.map(tradeRMultiple);
-  const totalR = sum(tradeRs);
+  let peakEquity = equityStart;
+  let currentEquity = equityStart;
+  let maxDrawdown = 0;
+
+  for (const trade of legs) {
+    const pnl = trade.exit.pnl;
+    realizedPnL += pnl;
+
+    if (pnl > 0) {
+      grossProfitLegs += pnl;
+      winningLegCount += 1;
+    } else if (pnl < 0) {
+      grossLossLegs += Math.abs(pnl);
+    }
+
+    currentEquity += pnl;
+    if (currentEquity > peakEquity) peakEquity = currentEquity;
+    const drawdown = (peakEquity - currentEquity) / Math.max(1e-12, peakEquity);
+    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+
+    if (trade.exit.reason === "SCALE") continue;
+
+    completedTrades.push(trade);
+    tradePnls.push(pnl);
+    tradeReturns.push(pnl / Math.max(1e-12, equityStart));
+    const tradeR = tradeRMultiple(trade);
+    tradeRs.push(tradeR);
+    totalR += tradeR;
+    labels.push(pnl > 0 ? "win" : pnl < 0 ? "loss" : "flat");
+
+    const holdMinutes = (trade.exit.time - trade.openTime) / (1000 * 60);
+    holdDurationsMinutes.push(holdMinutes);
+    openBars += Math.max(1, Math.round((trade.exit.time - trade.openTime) / estBarMs));
+
+    if (pnl > 0) {
+      winningTradeCount += 1;
+      grossProfitPositions += pnl;
+    } else if (pnl < 0) {
+      grossLossPositions += Math.abs(pnl);
+    }
+
+    if (trade.side === "long") {
+      longTradesCount += 1;
+      longPnLSum += pnl;
+      longRs.push(tradeR);
+      if (pnl > 0) longTradeWins += 1;
+    } else if (trade.side === "short") {
+      shortTradesCount += 1;
+      shortPnLSum += pnl;
+      shortRs.push(tradeR);
+      if (pnl > 0) shortTradeWins += 1;
+    }
+  }
+
   const avgR = mean(tradeRs);
-
-  const labels = completedTrades.map((trade) =>
-    trade.exit.pnl > 0 ? "win" : trade.exit.pnl < 0 ? "loss" : "flat"
-  );
   const { maxWin, maxLoss } = streaks(labels);
-
-  const tradePnls = completedTrades.map((trade) => trade.exit.pnl);
   const expectancy = mean(tradePnls);
-  const tradeReturns = completedTrades.map(
-    (trade) => trade.exit.pnl / Math.max(1e-12, equityStart)
-  );
   const tradeReturnStd = stddev(tradeReturns);
   const sharpePerTrade =
     tradeReturnStd === 0
@@ -169,54 +233,23 @@ export function buildMetrics({
       : mean(tradeReturns) / tradeReturnStd;
   const sortinoPerTrade = sortino(tradeReturns);
 
-  const grossProfitPositions = sum(winningTrades.map((trade) => trade.exit.pnl));
-  const grossLossPositions = Math.abs(
-    sum(losingTrades.map((trade) => trade.exit.pnl))
-  );
   const profitFactorPositions =
     grossLossPositions === 0
       ? grossProfitPositions > 0
         ? Infinity
         : 0
       : grossProfitPositions / grossLossPositions;
-
-  const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
-  const winningLegs = legs.filter((trade) => trade.exit.pnl > 0);
-  const losingLegs = legs.filter((trade) => trade.exit.pnl < 0);
-  const grossProfitLegs = sum(winningLegs.map((trade) => trade.exit.pnl));
-  const grossLossLegs = Math.abs(sum(losingLegs.map((trade) => trade.exit.pnl)));
   const profitFactorLegs =
     grossLossLegs === 0
       ? grossProfitLegs > 0
         ? Infinity
         : 0
       : grossProfitLegs / grossLossLegs;
-
-  let peakEquity = equityStart;
-  let currentEquity = equityStart;
-  let maxDrawdown = 0;
-
-  for (const leg of legs) {
-    currentEquity += leg.exit.pnl;
-    if (currentEquity > peakEquity) peakEquity = currentEquity;
-    const drawdown = (peakEquity - currentEquity) / Math.max(1e-12, peakEquity);
-    if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-  }
-
-  const realizedPnL = sum(closed.map((trade) => trade.exit.pnl));
   const returnPct = (equityFinal - equityStart) / Math.max(1e-12, equityStart);
   const calmar = maxDrawdown === 0 ? (returnPct > 0 ? Infinity : 0) : returnPct / maxDrawdown;
 
   const totalBars = Math.max(1, candles.length);
-  const openBars = completedTrades.reduce((total, trade) => {
-    const barsHeld = Math.max(1, Math.round((trade.exit.time - trade.openTime) / estBarMs));
-    return total + barsHeld;
-  }, 0);
   const exposurePct = openBars / totalBars;
-
-  const holdDurationsMinutes = completedTrades.map(
-    (trade) => (trade.exit.time - trade.openTime) / (1000 * 60)
-  );
   const avgHoldMin = mean(holdDurationsMinutes);
 
   const equitySeries =
@@ -236,13 +269,6 @@ export function buildMetrics({
     ? dailyReturnsSeries.filter((value) => value > 0).length / dailyReturnsSeries.length
     : 0;
 
-  const longTrades = completedTrades.filter((trade) => trade.side === "long");
-  const shortTrades = completedTrades.filter((trade) => trade.side === "short");
-  const longRs = longTrades.map(tradeRMultiple);
-  const shortRs = shortTrades.map(tradeRMultiple);
-  const longPnls = longTrades.map((trade) => trade.exit.pnl);
-  const shortPnls = shortTrades.map((trade) => trade.exit.pnl);
-
   const rDistribution = {
     p10: percentile(tradeRs, 0.1),
     p25: percentile(tradeRs, 0.25),
@@ -261,26 +287,26 @@ export function buildMetrics({
 
   const sideBreakdown = {
     long: {
-      trades: longTrades.length,
-      winRate: longTrades.length
-        ? longTrades.filter((trade) => trade.exit.pnl > 0).length / longTrades.length
+      trades: longTradesCount,
+      winRate: longTradesCount
+        ? longTradeWins / longTradesCount
         : 0,
-      avgPnL: mean(longPnls),
+      avgPnL: longTradesCount ? longPnLSum / longTradesCount : 0,
       avgR: mean(longRs),
     },
     short: {
-      trades: shortTrades.length,
-      winRate: shortTrades.length
-        ? shortTrades.filter((trade) => trade.exit.pnl > 0).length / shortTrades.length
+      trades: shortTradesCount,
+      winRate: shortTradesCount
+        ? shortTradeWins / shortTradesCount
         : 0,
-      avgPnL: mean(shortPnls),
+      avgPnL: shortTradesCount ? shortPnLSum / shortTradesCount : 0,
       avgR: mean(shortRs),
     },
   };
 
   return {
     trades: completedTrades.length,
-    winRate: completedTrades.length ? winningTrades.length / completedTrades.length : 0,
+    winRate: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
     profitFactor: profitFactorPositions,
     expectancy,
     totalR,
@@ -303,9 +329,9 @@ export function buildMetrics({
     profitFactor_pos: profitFactorPositions,
     profitFactor_leg: profitFactorLegs,
     winRate_pos: completedTrades.length
-      ? winningTrades.length / completedTrades.length
+      ? winningTradeCount / completedTrades.length
       : 0,
-    winRate_leg: legs.length ? winningLegs.length / legs.length : 0,
+    winRate_leg: legs.length ? winningLegCount / legs.length : 0,
     sharpeDaily,
     sortinoDaily,
     sideBreakdown,

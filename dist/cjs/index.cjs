@@ -33,6 +33,7 @@ __export(index_exports, {
   backtest: () => backtest,
   backtestHistorical: () => backtestHistorical,
   backtestPortfolio: () => backtestPortfolio,
+  backtestTicks: () => backtestTicks,
   bpsOf: () => bpsOf,
   buildMetrics: () => buildMetrics,
   cachedCandlesPath: () => cachedCandlesPath,
@@ -316,56 +317,87 @@ function buildMetrics({
   estBarMs,
   eqSeries
 }) {
-  const completedTrades = closed.filter((trade) => trade.exit.reason !== "SCALE");
-  const winningTrades = completedTrades.filter((trade) => trade.exit.pnl > 0);
-  const losingTrades = completedTrades.filter((trade) => trade.exit.pnl < 0);
-  const tradeRs = completedTrades.map(tradeRMultiple);
-  const totalR = sum(tradeRs);
-  const avgR = mean(tradeRs);
-  const labels = completedTrades.map(
-    (trade) => trade.exit.pnl > 0 ? "win" : trade.exit.pnl < 0 ? "loss" : "flat"
-  );
-  const { maxWin, maxLoss } = streaks(labels);
-  const tradePnls = completedTrades.map((trade) => trade.exit.pnl);
-  const expectancy = mean(tradePnls);
-  const tradeReturns = completedTrades.map(
-    (trade) => trade.exit.pnl / Math.max(1e-12, equityStart)
-  );
-  const tradeReturnStd = stddev(tradeReturns);
-  const sharpePerTrade = tradeReturnStd === 0 ? tradeReturns.length ? Infinity : 0 : mean(tradeReturns) / tradeReturnStd;
-  const sortinoPerTrade = sortino(tradeReturns);
-  const grossProfitPositions = sum(winningTrades.map((trade) => trade.exit.pnl));
-  const grossLossPositions = Math.abs(
-    sum(losingTrades.map((trade) => trade.exit.pnl))
-  );
-  const profitFactorPositions = grossLossPositions === 0 ? grossProfitPositions > 0 ? Infinity : 0 : grossProfitPositions / grossLossPositions;
   const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
-  const winningLegs = legs.filter((trade) => trade.exit.pnl > 0);
-  const losingLegs = legs.filter((trade) => trade.exit.pnl < 0);
-  const grossProfitLegs = sum(winningLegs.map((trade) => trade.exit.pnl));
-  const grossLossLegs = Math.abs(sum(losingLegs.map((trade) => trade.exit.pnl)));
-  const profitFactorLegs = grossLossLegs === 0 ? grossProfitLegs > 0 ? Infinity : 0 : grossProfitLegs / grossLossLegs;
+  const completedTrades = [];
+  const tradeRs = [];
+  const tradePnls = [];
+  const tradeReturns = [];
+  const holdDurationsMinutes = [];
+  const labels = [];
+  const longRs = [];
+  const shortRs = [];
+  let totalR = 0;
+  let realizedPnL = 0;
+  let winningTradeCount = 0;
+  let grossProfitPositions = 0;
+  let grossLossPositions = 0;
+  let grossProfitLegs = 0;
+  let grossLossLegs = 0;
+  let winningLegCount = 0;
+  let openBars = 0;
+  let longTradesCount = 0;
+  let longTradeWins = 0;
+  let longPnLSum = 0;
+  let shortTradesCount = 0;
+  let shortTradeWins = 0;
+  let shortPnLSum = 0;
   let peakEquity = equityStart;
   let currentEquity = equityStart;
   let maxDrawdown = 0;
-  for (const leg of legs) {
-    currentEquity += leg.exit.pnl;
+  for (const trade of legs) {
+    const pnl = trade.exit.pnl;
+    realizedPnL += pnl;
+    if (pnl > 0) {
+      grossProfitLegs += pnl;
+      winningLegCount += 1;
+    } else if (pnl < 0) {
+      grossLossLegs += Math.abs(pnl);
+    }
+    currentEquity += pnl;
     if (currentEquity > peakEquity) peakEquity = currentEquity;
     const drawdown = (peakEquity - currentEquity) / Math.max(1e-12, peakEquity);
     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+    if (trade.exit.reason === "SCALE") continue;
+    completedTrades.push(trade);
+    tradePnls.push(pnl);
+    tradeReturns.push(pnl / Math.max(1e-12, equityStart));
+    const tradeR = tradeRMultiple(trade);
+    tradeRs.push(tradeR);
+    totalR += tradeR;
+    labels.push(pnl > 0 ? "win" : pnl < 0 ? "loss" : "flat");
+    const holdMinutes = (trade.exit.time - trade.openTime) / (1e3 * 60);
+    holdDurationsMinutes.push(holdMinutes);
+    openBars += Math.max(1, Math.round((trade.exit.time - trade.openTime) / estBarMs));
+    if (pnl > 0) {
+      winningTradeCount += 1;
+      grossProfitPositions += pnl;
+    } else if (pnl < 0) {
+      grossLossPositions += Math.abs(pnl);
+    }
+    if (trade.side === "long") {
+      longTradesCount += 1;
+      longPnLSum += pnl;
+      longRs.push(tradeR);
+      if (pnl > 0) longTradeWins += 1;
+    } else if (trade.side === "short") {
+      shortTradesCount += 1;
+      shortPnLSum += pnl;
+      shortRs.push(tradeR);
+      if (pnl > 0) shortTradeWins += 1;
+    }
   }
-  const realizedPnL = sum(closed.map((trade) => trade.exit.pnl));
+  const avgR = mean(tradeRs);
+  const { maxWin, maxLoss } = streaks(labels);
+  const expectancy = mean(tradePnls);
+  const tradeReturnStd = stddev(tradeReturns);
+  const sharpePerTrade = tradeReturnStd === 0 ? tradeReturns.length ? Infinity : 0 : mean(tradeReturns) / tradeReturnStd;
+  const sortinoPerTrade = sortino(tradeReturns);
+  const profitFactorPositions = grossLossPositions === 0 ? grossProfitPositions > 0 ? Infinity : 0 : grossProfitPositions / grossLossPositions;
+  const profitFactorLegs = grossLossLegs === 0 ? grossProfitLegs > 0 ? Infinity : 0 : grossProfitLegs / grossLossLegs;
   const returnPct = (equityFinal - equityStart) / Math.max(1e-12, equityStart);
   const calmar = maxDrawdown === 0 ? returnPct > 0 ? Infinity : 0 : returnPct / maxDrawdown;
   const totalBars = Math.max(1, candles.length);
-  const openBars = completedTrades.reduce((total, trade) => {
-    const barsHeld = Math.max(1, Math.round((trade.exit.time - trade.openTime) / estBarMs));
-    return total + barsHeld;
-  }, 0);
   const exposurePct = openBars / totalBars;
-  const holdDurationsMinutes = completedTrades.map(
-    (trade) => (trade.exit.time - trade.openTime) / (1e3 * 60)
-  );
   const avgHoldMin = mean(holdDurationsMinutes);
   const equitySeries = eqSeries && eqSeries.length ? eqSeries : buildEquitySeriesFromLegs({ legs, equityStart });
   const dailyReturnsSeries = dailyReturns(equitySeries);
@@ -373,12 +405,6 @@ function buildMetrics({
   const sharpeDaily = dailyStd === 0 ? dailyReturnsSeries.length ? Infinity : 0 : mean(dailyReturnsSeries) / dailyStd;
   const sortinoDaily = sortino(dailyReturnsSeries);
   const dailyWinRate = dailyReturnsSeries.length ? dailyReturnsSeries.filter((value) => value > 0).length / dailyReturnsSeries.length : 0;
-  const longTrades = completedTrades.filter((trade) => trade.side === "long");
-  const shortTrades = completedTrades.filter((trade) => trade.side === "short");
-  const longRs = longTrades.map(tradeRMultiple);
-  const shortRs = shortTrades.map(tradeRMultiple);
-  const longPnls = longTrades.map((trade) => trade.exit.pnl);
-  const shortPnls = shortTrades.map((trade) => trade.exit.pnl);
   const rDistribution = {
     p10: percentile(tradeRs, 0.1),
     p25: percentile(tradeRs, 0.25),
@@ -395,21 +421,21 @@ function buildMetrics({
   };
   const sideBreakdown = {
     long: {
-      trades: longTrades.length,
-      winRate: longTrades.length ? longTrades.filter((trade) => trade.exit.pnl > 0).length / longTrades.length : 0,
-      avgPnL: mean(longPnls),
+      trades: longTradesCount,
+      winRate: longTradesCount ? longTradeWins / longTradesCount : 0,
+      avgPnL: longTradesCount ? longPnLSum / longTradesCount : 0,
       avgR: mean(longRs)
     },
     short: {
-      trades: shortTrades.length,
-      winRate: shortTrades.length ? shortTrades.filter((trade) => trade.exit.pnl > 0).length / shortTrades.length : 0,
-      avgPnL: mean(shortPnls),
+      trades: shortTradesCount,
+      winRate: shortTradesCount ? shortTradeWins / shortTradesCount : 0,
+      avgPnL: shortTradesCount ? shortPnLSum / shortTradesCount : 0,
       avgR: mean(shortRs)
     }
   };
   return {
     trades: completedTrades.length,
-    winRate: completedTrades.length ? winningTrades.length / completedTrades.length : 0,
+    winRate: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
     profitFactor: profitFactorPositions,
     expectancy,
     totalR,
@@ -431,8 +457,8 @@ function buildMetrics({
     startEquity: equityStart,
     profitFactor_pos: profitFactorPositions,
     profitFactor_leg: profitFactorLegs,
-    winRate_pos: completedTrades.length ? winningTrades.length / completedTrades.length : 0,
-    winRate_leg: legs.length ? winningLegs.length / legs.length : 0,
+    winRate_pos: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
+    winRate_leg: legs.length ? winningLegCount / legs.length : 0,
     sharpeDaily,
     sortinoDaily,
     sideBreakdown,
@@ -1576,46 +1602,1120 @@ function backtest(rawOptions) {
   };
 }
 
+// src/engine/backtestTicks.js
+function asNumber2(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+function normalizeSide2(value) {
+  if (value === "long" || value === "buy") return "long";
+  if (value === "short" || value === "sell") return "short";
+  return null;
+}
+function normalizeTick(tick) {
+  const time = Number(tick?.time);
+  const bid = asNumber2(tick?.bid);
+  const ask = asNumber2(tick?.ask);
+  const last = asNumber2(tick?.price ?? tick?.last ?? tick?.close);
+  const mid = bid !== null && ask !== null ? (bid + ask) / 2 : last ?? bid ?? ask;
+  if (!Number.isFinite(time) || !Number.isFinite(mid)) return null;
+  const prices = [asNumber2(tick?.low), asNumber2(tick?.high), bid, ask, last, mid].filter(
+    Number.isFinite
+  );
+  const low = prices.length ? Math.min(...prices) : mid;
+  const high = prices.length ? Math.max(...prices) : mid;
+  return {
+    ...tick,
+    time,
+    open: mid,
+    high,
+    low,
+    close: mid,
+    volume: asNumber2(tick?.size ?? tick?.volume) ?? void 0
+  };
+}
+function normalizeSignal2(signal, bar, fallbackR) {
+  if (!signal) return null;
+  const side = normalizeSide2(signal.side ?? signal.direction ?? signal.action);
+  if (!side) return null;
+  const hasExplicitEntry = signal.entry !== void 0 || signal.limit !== void 0 || signal.price !== void 0;
+  const entry = asNumber2(signal.entry ?? signal.limit ?? signal.price) ?? asNumber2(bar?.close);
+  const stop = asNumber2(signal.stop ?? signal.stopLoss ?? signal.sl);
+  if (entry === null || stop === null) return null;
+  const risk = Math.abs(entry - stop);
+  if (!(risk > 0)) return null;
+  let takeProfit = asNumber2(signal.takeProfit ?? signal.target ?? signal.tp);
+  const rrHint = asNumber2(signal._rr ?? signal.rr);
+  const targetR = rrHint ?? fallbackR;
+  if (takeProfit === null && Number.isFinite(targetR) && targetR > 0) {
+    takeProfit = side === "long" ? entry + risk * targetR : entry - risk * targetR;
+  }
+  if (takeProfit === null) return null;
+  return {
+    ...signal,
+    side,
+    entry,
+    stop,
+    takeProfit,
+    qty: asNumber2(signal.qty ?? signal.size),
+    riskPct: asNumber2(signal.riskPct),
+    riskFraction: asNumber2(signal.riskFraction),
+    orderType: hasExplicitEntry ? "limit" : "market"
+  };
+}
+function equityPoint2(time, equity) {
+  return { time, timestamp: time, equity };
+}
+function deterministicFill(probability, seedParts) {
+  if (probability >= 1) return true;
+  if (probability <= 0) return false;
+  let hash = 2166136261;
+  const seed = seedParts.join("|");
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  const normalized = (hash >>> 0) / 4294967295;
+  return normalized <= probability;
+}
+function backtestTicks({
+  ticks = [],
+  symbol = "UNKNOWN",
+  equity = 1e4,
+  riskPct = 1,
+  signal,
+  interval,
+  range,
+  slippageBps = 1,
+  feeBps = 0,
+  costs = null,
+  finalTP_R = 3,
+  maxDailyLossPct = 0,
+  dailyMaxTrades = 0,
+  qtyStep = 1e-3,
+  minQty = 1e-3,
+  maxLeverage = 2,
+  collectEqSeries = true,
+  collectReplay = true,
+  queueFillProbability = 1,
+  oco = {}
+} = {}) {
+  if (!Array.isArray(ticks) || ticks.length === 0) {
+    throw new Error("backtestTicks() requires a non-empty ticks array");
+  }
+  if (typeof signal !== "function") {
+    throw new Error("backtestTicks() requires a signal function");
+  }
+  const normalizedTicks = ticks.map(normalizeTick).filter(Boolean);
+  if (!normalizedTicks.length) {
+    throw new Error("backtestTicks() could not normalize any ticks");
+  }
+  const ocoOptions = {
+    mode: "intrabar",
+    tieBreak: "pessimistic",
+    ...oco
+  };
+  const trades = [];
+  const eqSeries = collectEqSeries ? [equityPoint2(normalizedTicks[0].time, equity)] : [];
+  const replayFrames = collectReplay ? [] : [];
+  const replayEvents = collectReplay ? [] : [];
+  const history = [];
+  let open = null;
+  let pending = null;
+  let currentEquity = equity;
+  let dayKey = null;
+  let dayStartEquity = equity;
+  let dayPnl = 0;
+  let dayTrades = 0;
+  let tradeIdCounter = 0;
+  function markedEquity(tick) {
+    if (!open) return currentEquity;
+    const direction = open.side === "long" ? 1 : -1;
+    return currentEquity + (tick.close - open.entryFill) * direction * open.size;
+  }
+  function recordFrame(tick) {
+    const equityNow = markedEquity(tick);
+    if (collectEqSeries) {
+      eqSeries.push(equityPoint2(tick.time, equityNow));
+    }
+    if (collectReplay) {
+      replayFrames.push({
+        t: new Date(tick.time).toISOString(),
+        price: tick.close,
+        equity: equityNow,
+        posSide: open?.side ?? null,
+        posSize: open?.size ?? 0
+      });
+    }
+  }
+  function closePosition(tick, reason, rawPrice, fillKind) {
+    if (!open) return;
+    const exitSide = open.side === "long" ? "short" : "long";
+    const { price, feeTotal } = applyFill(rawPrice, exitSide, {
+      slippageBps,
+      feeBps,
+      kind: fillKind,
+      qty: open.size,
+      costs
+    });
+    const direction = open.side === "long" ? 1 : -1;
+    const grossPnl = (price - open.entryFill) * direction * open.size;
+    const pnl = grossPnl - (open.entryFeeTotal || 0) - feeTotal;
+    currentEquity += pnl;
+    dayPnl += pnl;
+    const trade = {
+      ...open,
+      exit: {
+        price,
+        time: tick.time,
+        reason,
+        pnl
+      }
+    };
+    trades.push(trade);
+    if (collectReplay) {
+      replayEvents.push({
+        t: new Date(tick.time).toISOString(),
+        price,
+        type: reason === "TP" ? "tp" : reason === "SL" ? "sl" : "exit",
+        side: open.side,
+        size: open.size,
+        tradeId: open.id,
+        reason,
+        pnl
+      });
+    }
+    open = null;
+  }
+  for (let index = 0; index < normalizedTicks.length; index += 1) {
+    const tick = normalizedTicks[index];
+    history.push(tick);
+    const currentDayKey = dayKeyUTC2(tick.time);
+    if (dayKey === null || currentDayKey !== dayKey) {
+      dayKey = currentDayKey;
+      dayStartEquity = currentEquity;
+      dayPnl = 0;
+      dayTrades = 0;
+    }
+    if (open) {
+      const { hit, px } = ocoExitCheck({
+        side: open.side,
+        stop: open.stop,
+        tp: open.takeProfit,
+        bar: tick,
+        mode: "intrabar",
+        tieBreak: ocoOptions.tieBreak
+      });
+      if (hit) {
+        closePosition(tick, hit, px, hit === "TP" ? "limit" : "stop");
+      }
+    }
+    if (!open && pending && index > pending.createdAtIndex) {
+      if (pending.orderType === "market") {
+        const rawSize = pending.fixedQty ?? calculatePositionSize({
+          equity: currentEquity,
+          entry: tick.close,
+          stop: pending.stop,
+          riskFraction: pending.riskFrac,
+          qtyStep,
+          minQty,
+          maxLeverage
+        });
+        const size = roundStep2(rawSize, qtyStep);
+        if (size >= minQty) {
+          const { price, feeTotal } = applyFill(tick.close, pending.side, {
+            slippageBps,
+            feeBps,
+            kind: "market",
+            qty: size,
+            costs
+          });
+          open = {
+            symbol,
+            id: ++tradeIdCounter,
+            side: pending.side,
+            entry: tick.close,
+            stop: pending.stop,
+            takeProfit: pending.takeProfit,
+            size,
+            openTime: tick.time,
+            entryFill: price,
+            entryFeeTotal: feeTotal,
+            _initRisk: Math.abs(tick.close - pending.stop)
+          };
+          dayTrades += 1;
+          if (collectReplay) {
+            replayEvents.push({
+              t: new Date(tick.time).toISOString(),
+              price,
+              type: "entry",
+              side: open.side,
+              size,
+              tradeId: open.id
+            });
+          }
+        }
+        pending = null;
+      } else {
+        const touched = pending.side === "long" ? tick.low <= pending.entry : tick.high >= pending.entry;
+        if (touched && deterministicFill(queueFillProbability, [
+          symbol,
+          tick.time,
+          pending.entry,
+          pending.stop,
+          pending.side
+        ])) {
+          const rawSize = pending.fixedQty ?? calculatePositionSize({
+            equity: currentEquity,
+            entry: pending.entry,
+            stop: pending.stop,
+            riskFraction: pending.riskFrac,
+            qtyStep,
+            minQty,
+            maxLeverage
+          });
+          const size = roundStep2(rawSize, qtyStep);
+          if (size >= minQty) {
+            const { price, feeTotal } = applyFill(pending.entry, pending.side, {
+              slippageBps,
+              feeBps,
+              kind: "limit",
+              qty: size,
+              costs
+            });
+            open = {
+              symbol,
+              id: ++tradeIdCounter,
+              side: pending.side,
+              entry: pending.entry,
+              stop: pending.stop,
+              takeProfit: pending.takeProfit,
+              size,
+              openTime: tick.time,
+              entryFill: price,
+              entryFeeTotal: feeTotal,
+              _initRisk: Math.abs(pending.entry - pending.stop)
+            };
+            dayTrades += 1;
+            if (collectReplay) {
+              replayEvents.push({
+                t: new Date(tick.time).toISOString(),
+                price,
+                type: "entry",
+                side: open.side,
+                size,
+                tradeId: open.id
+              });
+            }
+          }
+          pending = null;
+        }
+      }
+    }
+    const maxLossDollars = Math.abs(maxDailyLossPct) / 100 * dayStartEquity;
+    const dailyLossHit = maxDailyLossPct > 0 && dayPnl <= -maxLossDollars;
+    const dailyTradeCapHit = dailyMaxTrades > 0 && dayTrades >= dailyMaxTrades;
+    if (!open && !pending && !dailyLossHit && !dailyTradeCapHit) {
+      const nextSignal = normalizeSignal2(
+        signal({
+          candles: history,
+          index,
+          bar: tick,
+          equity: markedEquity(tick),
+          openPosition: open,
+          pendingOrder: pending
+        }),
+        tick,
+        finalTP_R
+      );
+      if (nextSignal) {
+        pending = {
+          side: nextSignal.side,
+          entry: nextSignal.entry,
+          stop: nextSignal.stop,
+          takeProfit: nextSignal.takeProfit,
+          fixedQty: nextSignal.qty,
+          riskFrac: Number.isFinite(nextSignal.riskFraction) ? nextSignal.riskFraction : Number.isFinite(nextSignal.riskPct) ? nextSignal.riskPct / 100 : riskPct / 100,
+          orderType: nextSignal.orderType,
+          createdAtIndex: index
+        };
+      }
+    }
+    recordFrame(tick);
+  }
+  if (open) {
+    const lastTick = normalizedTicks[normalizedTicks.length - 1];
+    closePosition(lastTick, "EOT", lastTick.close, "market");
+    recordFrame(lastTick);
+  }
+  const positions = trades;
+  const metrics = buildMetrics({
+    closed: trades,
+    equityStart: equity,
+    equityFinal: currentEquity,
+    candles: normalizedTicks,
+    estBarMs: normalizedTicks.length > 1 ? Math.max(1, normalizedTicks[1].time - normalizedTicks[0].time) : 1,
+    eqSeries
+  });
+  return {
+    symbol,
+    interval,
+    range,
+    trades,
+    positions,
+    metrics,
+    eqSeries,
+    replay: {
+      frames: replayFrames,
+      events: replayEvents
+    }
+  };
+}
+
+// src/engine/barSystemRunner.js
+function asNumber3(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+function equityPoint3(time, equity, extra = {}) {
+  return { time, timestamp: time, equity, ...extra };
+}
+function isArrayIndexKey2(property) {
+  if (typeof property !== "string") return false;
+  const numeric = Number(property);
+  return Number.isInteger(numeric) && numeric >= 0;
+}
+function strictHistoryView2(candles, currentIndex) {
+  return new Proxy(candles, {
+    get(target, property, receiver) {
+      if (isArrayIndexKey2(property) && Number(property) >= target.length) {
+        throw new Error(
+          `strict mode: signal() tried to access candles[${property}] beyond current index ${currentIndex}`
+        );
+      }
+      return Reflect.get(target, property, receiver);
+    }
+  });
+}
+function normalizeSide3(value) {
+  if (value === "long" || value === "buy") return "long";
+  if (value === "short" || value === "sell") return "short";
+  return null;
+}
+function normalizeSignal3(signal, bar, fallbackR) {
+  if (!signal) return null;
+  const side = normalizeSide3(signal.side ?? signal.direction ?? signal.action);
+  if (!side) return null;
+  const entry = asNumber3(signal.entry ?? signal.limit ?? signal.price) ?? asNumber3(bar?.close);
+  const stop = asNumber3(signal.stop ?? signal.stopLoss ?? signal.sl);
+  if (entry === null || stop === null) return null;
+  const risk = Math.abs(entry - stop);
+  if (!(risk > 0)) return null;
+  let takeProfit = asNumber3(signal.takeProfit ?? signal.target ?? signal.tp);
+  const rrHint = asNumber3(signal._rr ?? signal.rr);
+  const targetR = rrHint ?? fallbackR;
+  if (takeProfit === null && Number.isFinite(targetR) && targetR > 0) {
+    takeProfit = side === "long" ? entry + risk * targetR : entry - risk * targetR;
+  }
+  if (takeProfit === null) return null;
+  return {
+    ...signal,
+    side,
+    entry,
+    stop,
+    takeProfit,
+    qty: asNumber3(signal.qty ?? signal.size),
+    riskPct: asNumber3(signal.riskPct),
+    riskFraction: asNumber3(signal.riskFraction),
+    _rr: rrHint ?? signal._rr,
+    _initRisk: asNumber3(signal._initRisk) ?? signal._initRisk
+  };
+}
+function mergeOptions2(options) {
+  const normalizedRiskPct = Number.isFinite(options.riskFraction) ? options.riskFraction * 100 : options.riskPct;
+  return {
+    candles: normalizeCandles(options.candles ?? []),
+    symbol: options.symbol ?? "UNKNOWN",
+    equity: options.equity ?? 1e4,
+    riskPct: normalizedRiskPct ?? 1,
+    signal: options.signal,
+    interval: options.interval,
+    range: options.range,
+    warmupBars: options.warmupBars ?? 200,
+    slippageBps: options.slippageBps ?? 1,
+    feeBps: options.feeBps ?? 0,
+    costs: options.costs ?? null,
+    scaleOutAtR: options.scaleOutAtR ?? 1,
+    scaleOutFrac: options.scaleOutFrac ?? 0.5,
+    finalTP_R: options.finalTP_R ?? 3,
+    maxDailyLossPct: options.maxDailyLossPct ?? 2,
+    atrTrailMult: options.atrTrailMult ?? 0,
+    atrTrailPeriod: options.atrTrailPeriod ?? 14,
+    oco: {
+      mode: "intrabar",
+      tieBreak: "pessimistic",
+      clampStops: true,
+      clampEpsBps: 0.25,
+      ...options.oco || {}
+    },
+    triggerMode: options.triggerMode,
+    flattenAtClose: options.flattenAtClose ?? true,
+    dailyMaxTrades: options.dailyMaxTrades ?? 0,
+    postLossCooldownBars: options.postLossCooldownBars ?? 0,
+    mfeTrail: {
+      enabled: false,
+      armR: 1,
+      givebackR: 0.5,
+      ...options.mfeTrail || {}
+    },
+    pyramiding: {
+      enabled: false,
+      addAtR: 1,
+      addFrac: 0.25,
+      maxAdds: 1,
+      onlyAfterBreakEven: true,
+      ...options.pyramiding || {}
+    },
+    volScale: {
+      enabled: false,
+      atrPeriod: options.atrTrailPeriod ?? 14,
+      cutIfAtrX: 1.3,
+      cutFrac: 0.33,
+      noCutAboveR: 1.5,
+      ...options.volScale || {}
+    },
+    qtyStep: options.qtyStep ?? 1e-3,
+    minQty: options.minQty ?? 1e-3,
+    maxLeverage: options.maxLeverage ?? 2,
+    entryChase: {
+      enabled: true,
+      afterBars: 2,
+      maxSlipR: 0.2,
+      convertOnExpiry: false,
+      ...options.entryChase || {}
+    },
+    reanchorStopOnFill: options.reanchorStopOnFill ?? true,
+    maxSlipROnFill: options.maxSlipROnFill ?? 0.4,
+    collectEqSeries: options.collectEqSeries ?? true,
+    collectReplay: options.collectReplay ?? true,
+    strict: options.strict ?? false
+  };
+}
+function capitalForSize(entryPrice, size, maxLeverage) {
+  const leverage = Math.max(1, Number(maxLeverage) || 1);
+  return Math.abs(entryPrice) * Math.max(0, size) / leverage;
+}
+var BarSystemRunner = class {
+  constructor(rawOptions = {}) {
+    this.options = mergeOptions2(rawOptions);
+    const { candles, signal } = this.options;
+    if (!Array.isArray(candles) || candles.length === 0) {
+      throw new Error("backtestPortfolio() requires each system to include non-empty candles");
+    }
+    if (typeof signal !== "function") {
+      throw new Error("backtestPortfolio() requires each system to include a signal function");
+    }
+    this.symbol = this.options.symbol;
+    this.candles = candles;
+    this.closed = [];
+    this.currentEquity = this.options.equity;
+    this.open = null;
+    this.cooldown = 0;
+    this.pending = null;
+    this.currentDay = null;
+    this.dayPnl = 0;
+    this.dayTrades = 0;
+    this.dayEquityStart = this.options.equity;
+    this.tradeIdCounter = 0;
+    this.estimatedBarMs = estimateBarMs(candles);
+    const atrSourcePeriod = this.options.volScale.enabled ? this.options.volScale.atrPeriod : this.options.atrTrailPeriod;
+    const needAtr = this.options.atrTrailMult > 0 || this.options.volScale.enabled;
+    this.atrValues = needAtr ? atr(candles, atrSourcePeriod) : null;
+    this.wantEqSeries = Boolean(this.options.collectEqSeries);
+    this.wantReplay = Boolean(this.options.collectReplay);
+    this.eqSeries = this.wantEqSeries ? [equityPoint3(candles[0].time, this.currentEquity)] : [];
+    this.replayFrames = this.wantReplay ? [] : [];
+    this.replayEvents = this.wantReplay ? [] : [];
+    this.startIndex = Math.min(Math.max(1, this.options.warmupBars), candles.length);
+    this.history = candles.slice(0, this.startIndex);
+    this.index = this.startIndex;
+    this.lastBar = this.history.length ? this.history[this.history.length - 1] : null;
+  }
+  hasNext() {
+    return this.index < this.candles.length;
+  }
+  peekTime() {
+    return this.hasNext() ? this.candles[this.index].time : Infinity;
+  }
+  getLockedCapital() {
+    if (!this.open) return 0;
+    return capitalForSize(this.open.entryFill ?? this.open.entry, this.open.size, this.options.maxLeverage);
+  }
+  getMarkPrice() {
+    return this.lastBar?.close ?? null;
+  }
+  getMarkedEquity() {
+    if (!this.open || !this.lastBar) return this.currentEquity;
+    const direction = this.open.side === "long" ? 1 : -1;
+    const markPnl = (this.lastBar.close - (this.open.entryFill ?? this.open.entry)) * direction * this.open.size;
+    return this.currentEquity + markPnl;
+  }
+  recordFrame(bar, extraFrame = {}) {
+    if (this.wantEqSeries) {
+      this.eqSeries.push(equityPoint3(bar.time, this.currentEquity));
+    }
+    if (this.wantReplay) {
+      this.replayFrames.push({
+        t: new Date(bar.time).toISOString(),
+        price: bar.close,
+        equity: this.currentEquity,
+        posSide: this.open ? this.open.side : null,
+        posSize: this.open ? this.open.size : 0,
+        ...extraFrame
+      });
+    }
+  }
+  closeLeg({ openPos, qty, exitPx, exitFeeTotal = 0, time, reason }) {
+    const direction = openPos.side === "long" ? 1 : -1;
+    const entryFill = openPos.entryFill;
+    const grossPnl = (exitPx - entryFill) * direction * qty;
+    const entryFeePortion = (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
+    const pnl = grossPnl - entryFeePortion - exitFeeTotal;
+    this.currentEquity += pnl;
+    this.dayPnl += pnl;
+    if (this.wantEqSeries) {
+      this.eqSeries.push(equityPoint3(time, this.currentEquity));
+    }
+    const remaining = openPos.size - qty;
+    const eventType = reason === "SCALE" ? "scale-out" : reason === "TP" ? "tp" : reason === "SL" ? "sl" : reason === "EOD" ? "eod" : remaining <= 0 ? "exit" : "scale-out";
+    if (this.wantReplay) {
+      this.replayEvents.push({
+        t: new Date(time).toISOString(),
+        price: exitPx,
+        type: eventType,
+        side: openPos.side,
+        size: qty,
+        tradeId: openPos.id,
+        reason,
+        pnl,
+        symbol: this.symbol
+      });
+    }
+    const record = {
+      ...openPos,
+      size: qty,
+      exit: {
+        price: exitPx,
+        time,
+        reason,
+        pnl,
+        exitATR: openPos._lastATR ?? void 0
+      },
+      mfeR: openPos._mfeR ?? 0,
+      maeR: openPos._maeR ?? 0,
+      adds: openPos._adds ?? 0
+    };
+    this.closed.push(record);
+    openPos.size -= qty;
+    openPos._realized = (openPos._realized || 0) + pnl;
+    return record;
+  }
+  tightenStopToNetBreakeven(openPos, lastClose) {
+    if (!openPos || openPos.size <= 0) return;
+    const realized = openPos._realized || 0;
+    if (realized <= 0) return;
+    const direction = openPos.side === "long" ? 1 : -1;
+    const breakevenDelta = Math.abs(realized / openPos.size);
+    const breakevenPrice = direction === 1 ? openPos.entryFill - breakevenDelta : openPos.entryFill + breakevenDelta;
+    const tightened = direction === 1 ? Math.max(openPos.stop, breakevenPrice) : Math.min(openPos.stop, breakevenPrice);
+    openPos.stop = this.options.oco.clampStops ? clampStop(lastClose, tightened, openPos.side, this.options.oco) : tightened;
+  }
+  forceExit(reason, bar, overridePrice = null) {
+    if (!this.open || !bar) return;
+    const exitSide = this.open.side === "long" ? "short" : "long";
+    const exitBasePrice = overridePrice ?? bar.close;
+    const { price: filled, feeTotal: exitFeeTotal } = applyFill(exitBasePrice, exitSide, {
+      slippageBps: this.options.slippageBps,
+      feeBps: this.options.feeBps,
+      kind: "market",
+      qty: this.open.size,
+      costs: this.options.costs
+    });
+    this.closeLeg({
+      openPos: this.open,
+      qty: this.open.size,
+      exitPx: filled,
+      exitFeeTotal,
+      time: bar.time,
+      reason
+    });
+    this.cooldown = this.open?._cooldownBars || 0;
+    this.open = null;
+  }
+  cancelPending() {
+    this.pending = null;
+  }
+  openFromPending(bar, signalEquity, entryPrice, fillKind = "limit", resolveEntrySize) {
+    if (!this.pending) return false;
+    const plannedRisk = Math.max(
+      1e-8,
+      this.pending.plannedRiskAbs ?? Math.abs(this.pending.entry - this.pending.stop)
+    );
+    const slipR = Math.abs(entryPrice - this.pending.entry) / plannedRisk;
+    if (slipR > this.options.maxSlipROnFill) return false;
+    let stopPrice = this.pending.stop;
+    if (this.options.reanchorStopOnFill) {
+      const direction = this.pending.side === "long" ? 1 : -1;
+      stopPrice = direction === 1 ? entryPrice - plannedRisk : entryPrice + plannedRisk;
+    }
+    let takeProfit = this.pending.tp;
+    const immediateRisk = Math.abs(entryPrice - stopPrice) || 1e-8;
+    const rrHint = this.pending.meta?._rr;
+    if (this.options.reanchorStopOnFill && Number.isFinite(rrHint)) {
+      const plannedTarget = this.pending.side === "long" ? this.pending.entry + rrHint * plannedRisk : this.pending.entry - rrHint * plannedRisk;
+      const closeEnough = Math.abs((this.pending.tp ?? plannedTarget) - plannedTarget) <= Math.max(1e-8, plannedRisk * 1e-6);
+      if (closeEnough) {
+        takeProfit = this.pending.side === "long" ? entryPrice + rrHint * immediateRisk : entryPrice - rrHint * immediateRisk;
+      }
+    }
+    const desiredSize = this.pending.fixedQty ?? calculatePositionSize({
+      equity: signalEquity,
+      entry: entryPrice,
+      stop: stopPrice,
+      riskFraction: this.pending.riskFrac,
+      qtyStep: this.options.qtyStep,
+      minQty: this.options.minQty,
+      maxLeverage: this.options.maxLeverage
+    });
+    const approvedSize = typeof resolveEntrySize === "function" ? resolveEntrySize({
+      runner: this,
+      desiredSize,
+      entryPrice,
+      stopPrice,
+      pending: this.pending,
+      fillKind
+    }) : desiredSize;
+    const size = roundStep2(approvedSize, this.options.qtyStep);
+    if (size < this.options.minQty) return false;
+    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(
+      entryPrice,
+      this.pending.side,
+      {
+        slippageBps: this.options.slippageBps,
+        feeBps: this.options.feeBps,
+        kind: fillKind,
+        qty: size,
+        costs: this.options.costs
+      }
+    );
+    this.open = {
+      symbol: this.symbol,
+      ...this.pending.meta,
+      id: ++this.tradeIdCounter,
+      side: this.pending.side,
+      entry: entryPrice,
+      stop: stopPrice,
+      takeProfit,
+      size,
+      openTime: bar.time,
+      entryFill,
+      entryFeeTotal,
+      initSize: size,
+      baseSize: size,
+      _mfeR: 0,
+      _maeR: 0,
+      _adds: 0,
+      _initRisk: Math.abs(entryPrice - stopPrice) || 1e-8
+    };
+    if (this.atrValues && this.atrValues[this.index] !== void 0) {
+      this.open.entryATR = this.atrValues[this.index];
+      this.open._lastATR = this.atrValues[this.index];
+    }
+    this.dayTrades += 1;
+    this.pending = null;
+    if (this.wantReplay) {
+      this.replayEvents.push({
+        t: new Date(bar.time).toISOString(),
+        price: entryFill,
+        type: "entry",
+        side: this.open.side,
+        size,
+        tradeId: this.open.id,
+        symbol: this.symbol
+      });
+    }
+    return true;
+  }
+  buildSignalContext(index, bar, signalEquity) {
+    if (this.options.strict && this.history.length !== index + 1) {
+      throw new Error(
+        `strict mode: signal() received ${this.history.length} candles at index ${index}`
+      );
+    }
+    return {
+      candles: this.options.strict ? strictHistoryView2(this.history, index) : this.history,
+      index,
+      bar,
+      equity: signalEquity,
+      openPosition: this.open,
+      pendingOrder: this.pending
+    };
+  }
+  step({ signalEquity, canTrade = true, resolveEntrySize } = {}) {
+    if (!this.hasNext()) return null;
+    const bar = this.candles[this.index];
+    this.history.push(bar);
+    this.lastBar = bar;
+    const trigger = this.options.triggerMode || this.options.oco.mode || "intrabar";
+    const dayKey = this.options.flattenAtClose || trigger === "close" ? dayKeyET(bar.time) : dayKeyUTC2(bar.time);
+    if (this.currentDay === null || dayKey !== this.currentDay) {
+      this.currentDay = dayKey;
+      this.dayPnl = 0;
+      this.dayTrades = 0;
+      this.dayEquityStart = this.currentEquity;
+    }
+    if (this.open && this.open._maxBarsInTrade > 0) {
+      const barsHeld = Math.max(
+        1,
+        Math.round((bar.time - this.open.openTime) / this.estimatedBarMs)
+      );
+      if (barsHeld >= this.open._maxBarsInTrade) {
+        this.forceExit("TIME", bar);
+      }
+    }
+    if (this.open && Number.isFinite(this.open._maxHoldMin) && this.open._maxHoldMin > 0) {
+      const heldMinutes = (bar.time - this.open.openTime) / 6e4;
+      if (heldMinutes >= this.open._maxHoldMin) {
+        this.forceExit("TIME", bar);
+      }
+    }
+    if (this.options.flattenAtClose && this.open && isEODBar(bar.time)) {
+      this.forceExit("EOD", bar);
+    }
+    if (this.open) {
+      const risk = this.open._initRisk || 1e-8;
+      const highR = this.open.side === "long" ? (bar.high - this.open.entry) / risk : (this.open.entry - bar.low) / risk;
+      const lowR = this.open.side === "long" ? (bar.low - this.open.entry) / risk : (this.open.entry - bar.high) / risk;
+      const markR = this.open.side === "long" ? (bar.close - this.open.entry) / risk : (this.open.entry - bar.close) / risk;
+      if (this.atrValues && this.atrValues[this.index] !== void 0) {
+        this.open._lastATR = this.atrValues[this.index];
+      }
+      this.open._mfeR = Math.max(this.open._mfeR ?? -Infinity, highR);
+      this.open._maeR = Math.min(this.open._maeR ?? Infinity, lowR);
+      if (this.open._breakevenAtR > 0 && highR >= this.open._breakevenAtR && !this.open._beArmed) {
+        const tightened = this.open.side === "long" ? Math.max(this.open.stop, this.open.entry) : Math.min(this.open.stop, this.open.entry);
+        this.open.stop = this.options.oco.clampStops ? clampStop(bar.close, tightened, this.open.side, this.options.oco) : tightened;
+        this.open._beArmed = true;
+      }
+      if (this.open._trailAfterR > 0 && highR >= this.open._trailAfterR) {
+        const candidate = this.open.side === "long" ? bar.close - risk : bar.close + risk;
+        const tightened = this.open.side === "long" ? Math.max(this.open.stop, candidate) : Math.min(this.open.stop, candidate);
+        this.open.stop = this.options.oco.clampStops ? clampStop(bar.close, tightened, this.open.side, this.options.oco) : tightened;
+      }
+      if (this.options.mfeTrail.enabled && this.open._mfeR >= this.options.mfeTrail.armR) {
+        const targetR = Math.max(
+          0,
+          this.open._mfeR - Math.max(0, this.options.mfeTrail.givebackR)
+        );
+        const candidate = this.open.side === "long" ? this.open.entry + targetR * risk : this.open.entry - targetR * risk;
+        const tightened = this.open.side === "long" ? Math.max(this.open.stop, candidate) : Math.min(this.open.stop, candidate);
+        this.open.stop = this.options.oco.clampStops ? clampStop(bar.close, tightened, this.open.side, this.options.oco) : tightened;
+      }
+      if (this.options.atrTrailMult > 0 && this.atrValues && this.atrValues[this.index] !== void 0) {
+        const trailDistance = this.atrValues[this.index] * this.options.atrTrailMult;
+        const candidate = this.open.side === "long" ? bar.close - trailDistance : bar.close + trailDistance;
+        const tightened = this.open.side === "long" ? Math.max(this.open.stop, candidate) : Math.min(this.open.stop, candidate);
+        this.open.stop = this.options.oco.clampStops ? clampStop(bar.close, tightened, this.open.side, this.options.oco) : tightened;
+      }
+      if (this.options.volScale.enabled && this.open.entryATR && this.open.size > this.options.minQty && this.atrValues && this.atrValues[this.index] !== void 0) {
+        const ratio = this.atrValues[this.index] / Math.max(1e-12, this.open.entryATR);
+        const shouldCut = ratio >= this.options.volScale.cutIfAtrX && markR < this.options.volScale.noCutAboveR && !this.open._volCutDone;
+        if (shouldCut) {
+          const cutQty = roundStep2(this.open.size * this.options.volScale.cutFrac, this.options.qtyStep);
+          if (cutQty >= this.options.minQty && cutQty < this.open.size) {
+            const exitSide2 = this.open.side === "long" ? "short" : "long";
+            const { price: filled, feeTotal: exitFeeTotal } = applyFill(bar.close, exitSide2, {
+              slippageBps: this.options.slippageBps,
+              feeBps: this.options.feeBps,
+              kind: "market",
+              qty: cutQty,
+              costs: this.options.costs
+            });
+            this.closeLeg({
+              openPos: this.open,
+              qty: cutQty,
+              exitPx: filled,
+              exitFeeTotal,
+              time: bar.time,
+              reason: "SCALE"
+            });
+            this.tightenStopToNetBreakeven(this.open, bar.close);
+            this.open._volCutDone = true;
+          }
+        }
+      }
+      let addedThisBar = false;
+      if (this.options.pyramiding.enabled && (this.open._adds ?? 0) < this.options.pyramiding.maxAdds) {
+        const addNumber = (this.open._adds || 0) + 1;
+        const triggerR = this.options.pyramiding.addAtR * addNumber;
+        const triggerPrice = this.open.side === "long" ? this.open.entry + triggerR * risk : this.open.entry - triggerR * risk;
+        const breakEvenSatisfied = !this.options.pyramiding.onlyAfterBreakEven || this.open.side === "long" && this.open.stop >= this.open.entry || this.open.side === "short" && this.open.stop <= this.open.entry;
+        const touched = this.open.side === "long" ? trigger === "intrabar" ? bar.high >= triggerPrice : bar.close >= triggerPrice : trigger === "intrabar" ? bar.low <= triggerPrice : bar.close <= triggerPrice;
+        if (breakEvenSatisfied && touched) {
+          const baseSize = this.open.baseSize || this.open.initSize;
+          const requestedQty = roundStep2(baseSize * this.options.pyramiding.addFrac, this.options.qtyStep);
+          const addQty = typeof resolveEntrySize === "function" ? roundStep2(
+            resolveEntrySize({
+              runner: this,
+              desiredSize: requestedQty,
+              entryPrice: triggerPrice,
+              stopPrice: this.open.stop,
+              pending: {
+                side: this.open.side,
+                meta: this.open,
+                riskFrac: this.options.riskPct / 100
+              },
+              fillKind: "limit"
+            }),
+            this.options.qtyStep
+          ) : requestedQty;
+          if (addQty >= this.options.minQty) {
+            const { price: addFill, feeTotal: addFeeTotal } = applyFill(triggerPrice, this.open.side, {
+              slippageBps: this.options.slippageBps,
+              feeBps: this.options.feeBps,
+              kind: "limit",
+              qty: addQty,
+              costs: this.options.costs
+            });
+            const newSize = this.open.size + addQty;
+            this.open.entryFeeTotal += addFeeTotal;
+            this.open.entryFill = (this.open.entryFill * this.open.size + addFill * addQty) / newSize;
+            this.open.size = newSize;
+            this.open.initSize += addQty;
+            if (!this.open.baseSize) this.open.baseSize = baseSize;
+            this.open._adds = addNumber;
+            addedThisBar = true;
+          }
+        }
+      }
+      if (!addedThisBar && !this.open._scaled && this.options.scaleOutAtR > 0) {
+        const triggerPrice = this.open.side === "long" ? this.open.entry + this.options.scaleOutAtR * risk : this.open.entry - this.options.scaleOutAtR * risk;
+        const touched = this.open.side === "long" ? trigger === "intrabar" ? bar.high >= triggerPrice : bar.close >= triggerPrice : trigger === "intrabar" ? bar.low <= triggerPrice : bar.close <= triggerPrice;
+        if (touched) {
+          const exitSide2 = this.open.side === "long" ? "short" : "long";
+          const qty = roundStep2(this.open.size * this.options.scaleOutFrac, this.options.qtyStep);
+          if (qty >= this.options.minQty && qty < this.open.size) {
+            const { price: filled, feeTotal: exitFeeTotal } = applyFill(triggerPrice, exitSide2, {
+              slippageBps: this.options.slippageBps,
+              feeBps: this.options.feeBps,
+              kind: "limit",
+              qty,
+              costs: this.options.costs
+            });
+            this.closeLeg({
+              openPos: this.open,
+              qty,
+              exitPx: filled,
+              exitFeeTotal,
+              time: bar.time,
+              reason: "SCALE"
+            });
+            this.open._scaled = true;
+            this.open.takeProfit = this.open.side === "long" ? this.open.entry + this.options.finalTP_R * risk : this.open.entry - this.options.finalTP_R * risk;
+            this.tightenStopToNetBreakeven(this.open, bar.close);
+            this.open._beArmed = true;
+          }
+        }
+      }
+      const exitSide = this.open.side === "long" ? "short" : "long";
+      const { hit, px } = ocoExitCheck({
+        side: this.open.side,
+        stop: this.open.stop,
+        tp: this.open.takeProfit,
+        bar,
+        mode: this.options.oco.mode,
+        tieBreak: this.options.oco.tieBreak
+      });
+      if (hit) {
+        const exitKind = hit === "TP" ? "limit" : "stop";
+        const { price: filled, feeTotal: exitFeeTotal } = applyFill(px, exitSide, {
+          slippageBps: this.options.slippageBps,
+          feeBps: this.options.feeBps,
+          kind: exitKind,
+          qty: this.open.size,
+          costs: this.options.costs
+        });
+        const localCooldown = this.open._cooldownBars || 0;
+        this.closeLeg({
+          openPos: this.open,
+          qty: this.open.size,
+          exitPx: filled,
+          exitFeeTotal,
+          time: bar.time,
+          reason: hit
+        });
+        this.cooldown = (hit === "SL" ? Math.max(this.cooldown, this.options.postLossCooldownBars) : this.cooldown) || localCooldown;
+        this.open = null;
+      }
+    }
+    const maxLossDollars = this.options.maxDailyLossPct / 100 * this.dayEquityStart;
+    const dailyLossHit = this.dayPnl <= -Math.abs(maxLossDollars);
+    const dailyTradeCapHit = this.options.dailyMaxTrades > 0 && this.dayTrades >= this.options.dailyMaxTrades;
+    if (!this.open && this.pending) {
+      if (!canTrade) {
+        this.pending = null;
+      } else if (this.index > this.pending.expiresAt || dailyLossHit || dailyTradeCapHit) {
+        if (this.options.entryChase.enabled && this.options.entryChase.convertOnExpiry) {
+          const riskAtEdge = Math.abs(
+            this.pending.meta._initRisk ?? this.pending.entry - this.pending.stop
+          );
+          const priceNow = bar.close;
+          const direction = this.pending.side === "long" ? 1 : -1;
+          const slippedR = Math.max(
+            0,
+            direction === 1 ? priceNow - this.pending.entry : this.pending.entry - priceNow
+          ) / Math.max(1e-8, riskAtEdge);
+          if (slippedR > this.options.maxSlipROnFill) {
+            this.pending = null;
+          } else if (!this.openFromPending(bar, signalEquity, priceNow, "market", resolveEntrySize)) {
+            this.pending = null;
+          }
+        } else {
+          this.pending = null;
+        }
+      } else if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
+        if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
+          this.pending = null;
+        }
+      } else if (this.options.entryChase.enabled) {
+        const elapsedBars = this.index - (this.pending.startedAtIndex ?? this.index);
+        const midpoint = this.pending.meta?._imb?.mid;
+        if (!this.pending._chasedCE && midpoint !== void 0 && elapsedBars >= Math.max(1, this.options.entryChase.afterBars)) {
+          this.pending.entry = midpoint;
+          this.pending._chasedCE = true;
+        }
+        if (this.pending._chasedCE) {
+          const riskRef = Math.abs(
+            this.pending.meta?._initRisk ?? this.pending.entry - this.pending.stop
+          );
+          const priceNow = bar.close;
+          const direction = this.pending.side === "long" ? 1 : -1;
+          const slippedR = Math.max(
+            0,
+            direction === 1 ? priceNow - this.pending.entry : this.pending.entry - priceNow
+          ) / Math.max(1e-8, riskRef);
+          if (slippedR > this.options.maxSlipROnFill) {
+            this.pending = null;
+          } else if (slippedR > 0 && slippedR <= this.options.entryChase.maxSlipR) {
+            if (!this.openFromPending(bar, signalEquity, priceNow, "market", resolveEntrySize)) {
+              this.pending = null;
+            }
+          }
+        }
+      }
+    }
+    if (this.open || this.cooldown > 0) {
+      if (this.cooldown > 0) this.cooldown -= 1;
+      this.recordFrame(bar);
+      this.index += 1;
+      return bar;
+    }
+    if (!canTrade || dailyLossHit || dailyTradeCapHit) {
+      this.pending = null;
+      this.recordFrame(bar);
+      this.index += 1;
+      return bar;
+    }
+    if (!this.pending) {
+      const rawSignal = this.options.signal(this.buildSignalContext(this.index, bar, signalEquity));
+      const nextSignal = normalizeSignal3(rawSignal, bar, this.options.finalTP_R);
+      if (nextSignal) {
+        const signalRiskFraction = Number.isFinite(nextSignal.riskFraction) ? nextSignal.riskFraction : Number.isFinite(nextSignal.riskPct) ? nextSignal.riskPct / 100 : this.options.riskPct / 100;
+        const expiryBars = nextSignal._entryExpiryBars ?? 5;
+        this.pending = {
+          side: nextSignal.side,
+          entry: nextSignal.entry,
+          stop: nextSignal.stop,
+          tp: nextSignal.takeProfit,
+          riskFrac: signalRiskFraction,
+          fixedQty: nextSignal.qty,
+          expiresAt: this.index + Math.max(1, expiryBars),
+          startedAtIndex: this.index,
+          meta: nextSignal,
+          plannedRiskAbs: Math.abs(
+            nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop
+          )
+        };
+        if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
+          if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
+            this.pending = null;
+          }
+        }
+      }
+    }
+    this.recordFrame(bar);
+    this.index += 1;
+    return bar;
+  }
+  buildResult() {
+    const metrics = buildMetrics({
+      closed: this.closed,
+      equityStart: this.options.equity,
+      equityFinal: this.currentEquity,
+      candles: this.candles,
+      estBarMs: this.estimatedBarMs,
+      eqSeries: this.eqSeries
+    });
+    const positions = this.closed.filter((trade) => trade.exit.reason !== "SCALE");
+    return {
+      symbol: this.options.symbol,
+      interval: this.options.interval,
+      range: this.options.range,
+      trades: this.closed,
+      positions,
+      metrics,
+      eqSeries: this.eqSeries,
+      replay: {
+        frames: this.replayFrames,
+        events: this.replayEvents
+      }
+    };
+  }
+};
+function defaultSystemCap(totalEquity, capPct, maxAllocation, maxAllocationPct) {
+  const limits = [];
+  if (Number.isFinite(capPct) && capPct > 0) limits.push(totalEquity * capPct);
+  if (Number.isFinite(maxAllocation) && maxAllocation > 0) limits.push(maxAllocation);
+  if (Number.isFinite(maxAllocationPct) && maxAllocationPct > 0) {
+    limits.push(totalEquity * maxAllocationPct);
+  }
+  return limits.length ? Math.min(...limits) : Math.max(0, totalEquity);
+}
+
 // src/engine/portfolio.js
 function asWeight(value) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
-function combineEquitySeries(systemRuns, totalEquity) {
-  const timeline = /* @__PURE__ */ new Set();
-  for (const run of systemRuns) {
-    for (const point of run.result.eqSeries || []) {
-      timeline.add(point.time);
-    }
-  }
-  const times = [...timeline].sort((left, right) => left - right);
-  if (!times.length) {
-    return [{ time: 0, timestamp: 0, equity: totalEquity }];
-  }
-  const states = systemRuns.map((run) => ({
-    points: run.result.eqSeries || [],
-    index: 0,
-    lastEquity: run.allocationEquity
-  }));
-  return times.map((time) => {
-    let equity = 0;
-    states.forEach((state) => {
-      while (state.index < state.points.length && state.points[state.index].time <= time) {
-        state.lastEquity = state.points[state.index].equity;
-        state.index += 1;
-      }
-      equity += state.lastEquity;
-    });
-    return { time, timestamp: time, equity };
-  });
+function buildPortfolioPoint(time, equity, lockedCapital, availableCapital) {
+  return {
+    time,
+    timestamp: time,
+    equity,
+    lockedCapital,
+    availableCapital
+  };
 }
-function combineReplay(systemRuns, eqSeries, collectReplay) {
+function stableSystemOrder(left, right) {
+  return left.index - right.index;
+}
+function combineReplay(systemResults, eqSeries, collectReplay) {
   if (!collectReplay) {
     return { frames: [], events: [] };
   }
-  const events = systemRuns.flatMap(
-    (run) => (run.result.replay?.events || []).map((event) => ({
+  const events = systemResults.flatMap(
+    (entry) => (entry.result.replay?.events || []).map((event) => ({
       ...event,
-      symbol: event.symbol || run.symbol
+      symbol: event.symbol || entry.symbol
     }))
   ).sort((left, right) => new Date(left.t).getTime() - new Date(right.t).getTime());
   const frames = eqSeries.map((point) => ({
@@ -1623,54 +2723,183 @@ function combineReplay(systemRuns, eqSeries, collectReplay) {
     price: 0,
     equity: point.equity,
     posSide: null,
-    posSize: 0
+    posSize: 0,
+    lockedCapital: point.lockedCapital,
+    availableCapital: point.availableCapital
   }));
   return { frames, events };
+}
+function portfolioState(runners, initialEquity) {
+  let markedEquity = initialEquity;
+  let lockedCapital = 0;
+  for (const { runner, initialReferenceEquity } of runners) {
+    markedEquity += runner.getMarkedEquity() - initialReferenceEquity;
+    lockedCapital += runner.getLockedCapital();
+  }
+  return {
+    markedEquity,
+    lockedCapital,
+    availableCapital: markedEquity - lockedCapital
+  };
+}
+function findNextTimeAndActive(runners) {
+  let nextTime = Infinity;
+  const active = [];
+  for (const entry of runners) {
+    const time = entry.runner.peekTime();
+    if (time < nextTime) {
+      nextTime = time;
+      active.length = 0;
+      active.push(entry);
+      continue;
+    }
+    if (time === nextTime) {
+      active.push(entry);
+    }
+  }
+  return { nextTime, active };
+}
+function initialPortfolioTime(runners) {
+  let time = Infinity;
+  for (const { runner } of runners) {
+    const next = runner.candles[0]?.time ?? Infinity;
+    if (next < time) time = next;
+  }
+  return Number.isFinite(time) ? time : 0;
+}
+function resolveSystemCap(systemEntry, totalEquity) {
+  return defaultSystemCap(
+    Math.max(0, totalEquity),
+    systemEntry.defaultCapPct,
+    systemEntry.system.maxAllocation,
+    systemEntry.system.maxAllocationPct
+  );
+}
+function forceExitAll(runners, time) {
+  for (const { runner } of runners) {
+    if (!runner.open) continue;
+    const price = runner.getMarkPrice();
+    if (!Number.isFinite(price)) continue;
+    runner.forceExit("PORTFOLIO_DAILY_LOSS", { time, close: price }, price);
+  }
 }
 function backtestPortfolio({
   systems = [],
   equity = 1e4,
   allocation = "equal",
   collectEqSeries = true,
-  collectReplay = false
+  collectReplay = false,
+  maxDailyLossPct = 0
 } = {}) {
   if (!Array.isArray(systems) || systems.length === 0) {
     throw new Error("backtestPortfolio() requires a non-empty systems array");
   }
   const weights = allocation === "equal" ? systems.map(() => 1) : systems.map((system) => asWeight(system.weight || 0));
-  const totalWeight = weights.reduce((sum2, weight) => sum2 + weight, 0);
+  const totalWeight = weights.reduce((sumValue, weight) => sumValue + weight, 0);
   if (!(totalWeight > 0)) {
     throw new Error("backtestPortfolio() requires positive allocation weights");
   }
-  const systemRuns = systems.map((system, index) => {
-    const allocationEquity = equity * (weights[index] / totalWeight);
-    const result = backtest({
-      ...system,
-      equity: allocationEquity,
-      collectEqSeries,
-      collectReplay
-    });
+  const runners = systems.map((system, index) => {
+    const defaultCapPct = weights[index] / totalWeight;
+    const initialReferenceEquity = equity * defaultCapPct;
     return {
-      symbol: system.symbol ?? result.symbol ?? `system-${index + 1}`,
-      weight: weights[index],
-      allocationEquity,
-      result
+      index,
+      symbol: system.symbol ?? `system-${index + 1}`,
+      system,
+      defaultCapPct,
+      initialReferenceEquity,
+      runner: new BarSystemRunner({
+        ...system,
+        symbol: system.symbol ?? `system-${index + 1}`,
+        equity: initialReferenceEquity,
+        collectEqSeries,
+        collectReplay
+      })
     };
   });
-  const trades = systemRuns.flatMap(
+  const eqSeries = collectEqSeries ? [] : [];
+  let state = portfolioState(runners, equity);
+  if (collectEqSeries) {
+    eqSeries.push(
+      buildPortfolioPoint(
+        initialPortfolioTime(runners),
+        state.markedEquity,
+        state.lockedCapital,
+        state.availableCapital
+      )
+    );
+  }
+  let currentDay = null;
+  let dayStartEquity = equity;
+  let portfolioHalted = false;
+  while (true) {
+    const { nextTime, active } = findNextTimeAndActive(runners);
+    if (!Number.isFinite(nextTime)) break;
+    active.sort(stableSystemOrder);
+    const dayKey = dayKeyET(nextTime);
+    if (currentDay === null || dayKey !== currentDay) {
+      currentDay = dayKey;
+      state = portfolioState(runners, equity);
+      dayStartEquity = state.markedEquity;
+      portfolioHalted = false;
+    }
+    for (const systemEntry of active) {
+      state = portfolioState(runners, equity);
+      const totalEquity = state.markedEquity;
+      const availableCapital = Math.max(0, state.availableCapital);
+      const systemLocked = systemEntry.runner.getLockedCapital();
+      const systemCap = resolveSystemCap(systemEntry, totalEquity);
+      const systemRemainingCapital = Math.max(0, systemCap - systemLocked);
+      systemEntry.runner.step({
+        signalEquity: totalEquity,
+        canTrade: !portfolioHalted,
+        resolveEntrySize({ desiredSize, entryPrice }) {
+          const maxLeverage = Math.max(1, systemEntry.runner.options.maxLeverage || 1);
+          const byAvailable = availableCapital * maxLeverage / Math.max(1e-12, Math.abs(entryPrice));
+          const bySystemCap = systemRemainingCapital * maxLeverage / Math.max(1e-12, Math.abs(entryPrice));
+          return Math.min(desiredSize, byAvailable, bySystemCap);
+        }
+      });
+      state = portfolioState(runners, equity);
+      if (!portfolioHalted && maxDailyLossPct > 0 && state.markedEquity <= dayStartEquity * (1 - Math.abs(maxDailyLossPct) / 100)) {
+        portfolioHalted = true;
+        for (const { runner } of runners) runner.cancelPending();
+        forceExitAll(runners, nextTime);
+        state = portfolioState(runners, equity);
+      }
+    }
+    if (collectEqSeries) {
+      eqSeries.push(
+        buildPortfolioPoint(
+          nextTime,
+          state.markedEquity,
+          state.lockedCapital,
+          state.availableCapital
+        )
+      );
+    }
+  }
+  const systemResults = runners.map((entry) => ({
+    symbol: entry.symbol,
+    weight: entry.defaultCapPct,
+    equity: entry.initialReferenceEquity,
+    allocationCapPct: entry.defaultCapPct,
+    allocationCap: resolveSystemCap(entry, equity),
+    result: entry.runner.buildResult()
+  }));
+  const trades = systemResults.flatMap(
     (run) => run.result.trades.map((trade) => ({
       ...trade,
       symbol: trade.symbol || run.symbol
     }))
   ).sort((left, right) => left.exit.time - right.exit.time);
-  const positions = systemRuns.flatMap(
+  const positions = systemResults.flatMap(
     (run) => run.result.positions.map((trade) => ({
       ...trade,
       symbol: trade.symbol || run.symbol
     }))
   ).sort((left, right) => left.exit.time - right.exit.time);
-  const eqSeries = collectEqSeries ? combineEquitySeries(systemRuns, equity) : [];
-  const replay = combineReplay(systemRuns, eqSeries, collectReplay);
+  const replay = combineReplay(systemResults, eqSeries, collectReplay);
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
   const metrics = buildMetrics({
@@ -1690,12 +2919,7 @@ function backtestPortfolio({
     metrics,
     eqSeries,
     replay,
-    systems: systemRuns.map((run) => ({
-      symbol: run.symbol,
-      weight: run.weight / totalWeight,
-      equity: run.allocationEquity,
-      result: run.result
-    }))
+    systems: systemResults
   };
 }
 
@@ -1714,6 +2938,58 @@ function stitchEquitySeries(target, source) {
   const nextPoints = source.filter((point) => point.time > lastTime);
   target.push(...nextPoints);
 }
+function canonicalParams(params) {
+  const entries = Object.entries(params || {}).sort(
+    ([left], [right]) => left.localeCompare(right)
+  );
+  return JSON.stringify(Object.fromEntries(entries));
+}
+function buildWindowRanges(length, trainBars, testBars, stepBars, mode) {
+  const ranges = [];
+  for (let start = 0; start + trainBars + testBars <= length; start += stepBars) {
+    const trainStart = mode === "anchored" ? 0 : start;
+    const trainEnd = mode === "anchored" ? trainBars + start : start + trainBars;
+    const testStart = trainEnd;
+    const testEnd = testStart + testBars;
+    if (testEnd > length) break;
+    ranges.push({ trainStart, trainEnd, testStart, testEnd });
+  }
+  return ranges;
+}
+function summarizeBestParams(windows) {
+  const summaryBySignature = /* @__PURE__ */ new Map();
+  let adjacentRepeats = 0;
+  windows.forEach((window, index) => {
+    const signature = window.bestParamsSignature ?? canonicalParams(window.bestParams);
+    const current = summaryBySignature.get(signature) || {
+      params: window.bestParams,
+      wins: 0,
+      profitableWindows: 0,
+      oosTrades: 0
+    };
+    current.wins += 1;
+    current.profitableWindows += window.profitable ? 1 : 0;
+    current.oosTrades += window.oosTrades;
+    summaryBySignature.set(signature, current);
+    if (index > 0 && (windows[index - 1].bestParamsSignature ?? canonicalParams(windows[index - 1].bestParams)) === signature) {
+      adjacentRepeats += 1;
+    }
+  });
+  const byFrequency = [...summaryBySignature.values()].sort((left, right) => {
+    if (right.wins !== left.wins) return right.wins - left.wins;
+    return right.profitableWindows - left.profitableWindows;
+  });
+  const adjacentPairs = Math.max(0, windows.length - 1);
+  return {
+    winners: windows.map((window) => window.bestParams),
+    stability: {
+      adjacentRepeatRate: adjacentPairs ? adjacentRepeats / adjacentPairs : 0,
+      uniqueWinnerCount: summaryBySignature.size,
+      dominant: byFrequency[0] || null,
+      leaderboard: byFrequency
+    }
+  };
+}
 function walkForwardOptimize({
   candles = [],
   signalFactory,
@@ -1721,6 +2997,7 @@ function walkForwardOptimize({
   trainBars,
   testBars,
   stepBars = testBars,
+  mode = "rolling",
   scoreBy = "profitFactor",
   backtestOptions = {}
 } = {}) {
@@ -1736,18 +3013,28 @@ function walkForwardOptimize({
   if (!(trainBars > 0) || !(testBars > 0) || !(stepBars > 0)) {
     throw new Error("walkForwardOptimize() requires positive trainBars, testBars, and stepBars");
   }
+  if (mode !== "rolling" && mode !== "anchored") {
+    throw new Error('walkForwardOptimize() mode must be "rolling" or "anchored"');
+  }
   const windows = [];
   const allTrades = [];
   const allPositions = [];
   const eqSeries = [];
   let rollingEquity = backtestOptions.equity ?? 1e4;
-  for (let start = 0; start + trainBars + testBars <= candles.length; start += stepBars) {
-    const trainSlice = candles.slice(start, start + trainBars);
-    const testSlice = candles.slice(start + trainBars, start + trainBars + testBars);
+  const ranges = buildWindowRanges(candles.length, trainBars, testBars, stepBars, mode);
+  const trainBacktestOptions = {
+    ...backtestOptions,
+    collectEqSeries: false,
+    collectReplay: false
+  };
+  const testBacktestOptions = { ...backtestOptions };
+  for (const range of ranges) {
+    const trainSlice = candles.slice(range.trainStart, range.trainEnd);
+    const testSlice = candles.slice(range.testStart, range.testEnd);
     let best = null;
     for (const params of parameterSets) {
       const trainResult = backtest({
-        ...backtestOptions,
+        ...trainBacktestOptions,
         candles: trainSlice,
         equity: rollingEquity,
         signal: signalFactory(params)
@@ -1758,11 +3045,12 @@ function walkForwardOptimize({
       }
     }
     const testResult = backtest({
-      ...backtestOptions,
+      ...testBacktestOptions,
       candles: testSlice,
       equity: rollingEquity,
       signal: signalFactory(best.params)
     });
+    const bestParamsSignature = canonicalParams(best.params);
     rollingEquity = testResult.metrics.finalEquity;
     allTrades.push(...testResult.trades);
     allPositions.push(...testResult.positions);
@@ -1780,8 +3068,24 @@ function walkForwardOptimize({
       trainScore: best.score,
       trainMetrics: best.metrics,
       testMetrics: testResult.metrics,
+      oosTrades: testResult.metrics.trades,
+      profitable: testResult.metrics.totalPnL > 0,
+      stabilityScore: 0,
+      bestParamsSignature,
       result: testResult
     });
+  }
+  for (let index = 0; index < windows.length; index += 1) {
+    const currentSignature = windows[index].bestParamsSignature;
+    const adjacent = [];
+    if (index > 0) {
+      adjacent.push(windows[index - 1].bestParamsSignature === currentSignature ? 1 : 0);
+    }
+    if (index + 1 < windows.length) {
+      adjacent.push(windows[index + 1].bestParamsSignature === currentSignature ? 1 : 0);
+    }
+    windows[index].stabilityScore = adjacent.length ? adjacent.reduce((total, value) => total + value, 0) / adjacent.length : 1;
+    delete windows[index].bestParamsSignature;
   }
   const metrics = buildMetrics({
     closed: allTrades,
@@ -1791,6 +3095,7 @@ function walkForwardOptimize({
     estBarMs: estimateBarMs(candles),
     eqSeries
   });
+  const bestParamsSummary = summarizeBestParams(windows);
   return {
     windows,
     trades: allTrades,
@@ -1798,7 +3103,8 @@ function walkForwardOptimize({
     metrics,
     eqSeries,
     replay: { frames: [], events: [] },
-    bestParams: windows.map((window) => window.bestParams)
+    bestParams: Object.assign(windows.map((window) => window.bestParams), bestParamsSummary),
+    bestParamsSummary: bestParamsSummary.stability
   };
 }
 
@@ -2522,6 +3828,7 @@ function exportBacktestArtifacts({
   backtest,
   backtestHistorical,
   backtestPortfolio,
+  backtestTicks,
   bpsOf,
   buildMetrics,
   cachedCandlesPath,

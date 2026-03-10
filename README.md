@@ -13,7 +13,7 @@
 
 ---
 
-**tradelab** handles the simulation, sizing, exits, costs, and result exports — you bring the candles and signal logic.
+**tradelab** handles the simulation, sizing, exits, costs, and result exports; you bring the data and signal logic.
 
 It works cleanly for a single-strategy backtest and scales up to portfolio runs, walk-forward testing, and detailed execution modeling. It is not a broker connector or a live trading tool.
 
@@ -31,6 +31,7 @@ npm install tradelab
 - [Core concepts](#core-concepts)
 - [Portfolio mode](#portfolio-mode)
 - [Walk-forward optimization](#walk-forward-optimization)
+- [Tick backtests](#tick-backtests)
 - [Execution and cost modeling](#execution-and-cost-modeling)
 - [Exports and reporting](#exports-and-reporting)
 - [CLI](#cli)
@@ -43,9 +44,9 @@ npm install tradelab
 
 | Area | What you get |
 |---|---|
-| **Engine** | Candle-based backtests with position sizing, exits, risk controls, replay capture |
-| **Portfolio** | Multi-symbol aggregation with weight-based capital allocation |
-| **Walk-forward** | Rolling train/test validation with parameter search |
+| **Engine** | Candle and tick backtests with position sizing, exits, replay capture, and cost models |
+| **Portfolio** | Multi-system shared-capital simulation with live capital locking and daily loss halts |
+| **Walk-forward** | Rolling and anchored train/test validation with parameter search and stability summaries |
 | **Data** | Yahoo Finance downloads, CSV import, and local cache helpers |
 | **Costs** | Slippage, spread, and commission modeling |
 | **Exports** | HTML reports, metrics JSON, and trade CSV |
@@ -177,19 +178,19 @@ The minimum viable signal is just `side`, `stop`, and `rr`. Start there and add 
 {
   symbol, interval, range,
   trades,     // every realized leg, including partial exits
-  positions,  // completed positions — start here for analysis
+  positions,  // completed positions - start here for analysis
   metrics,    // winRate, profitFactor, maxDrawdown, sharpe, ...
-  eqSeries,   // [{ time, timestamp, equity }] — equity curve
+  eqSeries,   // [{ time, timestamp, equity }] - equity curve
   replay,     // visualization frames and events
 }
 ```
 
 **First checks after any run:**
 
-- `metrics.trades` — enough sample size to trust the numbers?
-- `metrics.profitFactor` — do winners beat losers gross of costs?
-- `metrics.maxDrawdown` — is the equity path survivable?
-- `metrics.sideBreakdown` — does one side carry the whole result?
+- `metrics.trades` - enough sample size to trust the numbers?
+- `metrics.profitFactor` - do winners beat losers gross of costs?
+- `metrics.maxDrawdown` - is the equity path survivable?
+- `metrics.sideBreakdown` - does one side carry the whole result?
 
 ---
 
@@ -209,19 +210,20 @@ const result = backtestPortfolio({
 });
 ```
 
-Capital is allocated up front by weight. Each system runs through the normal single-symbol engine, and the portfolio result merges trades, positions, replay events, and the equity series.
+Weights now act as default per-system allocation caps rather than pre-funded sleeves. Capital is locked only when a fill happens, `eqSeries` includes `lockedCapital` and `availableCapital`, later systems size against remaining live capital, and `maxDailyLossPct` on `backtestPortfolio()` can halt the whole book for the rest of the day.
 
 ---
 
 ## Walk-forward optimization
 
-Use `walkForwardOptimize()` when one in-sample backtest is not enough. It runs rolling train/test windows across the full candle history.
+Use `walkForwardOptimize()` when one in-sample backtest is not enough. It supports rolling and anchored train/test windows across the full candle history.
 
 ```js
 import { walkForwardOptimize } from "tradelab";
 
 const wf = walkForwardOptimize({
   candles,
+  mode: "anchored",
   trainBars: 180,
   testBars: 60,
   stepBars: 60,
@@ -236,7 +238,25 @@ const wf = walkForwardOptimize({
 });
 ```
 
-Each window picks the best parameter set in training, then runs it blind on the test slice. The `windows` array in the result shows per-window winners. If the winning parameters swing wildly from window to window, that is a real signal — not a formatting detail.
+Each window picks the best parameter set in training, then runs it blind on the test slice. The `windows` array now includes out-of-sample trade count, profitability, and a per-window stability score. `bestParamsSummary` reports how stable the winners were across the full run.
+
+---
+
+## Tick backtests
+
+Use `backtestTicks()` when you want event-driven fills on tick or quote data without changing the result shape used by metrics, exports, or replay.
+
+```js
+import { backtestTicks } from "tradelab";
+
+const result = backtestTicks({
+  ticks,
+  queueFillProbability: 0.35,
+  signal,
+});
+```
+
+Market entries fill on the next tick, limit orders can fill at the touch with configurable queue probability, and stop exits use the existing cost model with stop-specific slippage if you provide it in `costs.slippageByKind.stop`.
 
 ---
 
@@ -313,7 +333,7 @@ npx tradelab portfolio \
 # Walk-forward validation
 npx tradelab walk-forward \
   --source yahoo --symbol QQQ --interval 1d --period 2y \
-  --trainBars 180 --testBars 60
+  --trainBars 180 --testBars 60 --mode anchored
 
 # Prefetch and cache data
 npx tradelab prefetch --symbol SPY --interval 1d --period 1y
@@ -322,7 +342,7 @@ npx tradelab import-csv --csvPath ./data/spy.csv --symbol SPY --interval 1d
 
 **Built-in strategies:** `ema-cross` · `buy-hold`
 
-You can also point `--strategy` at a local module that exports `default(args)`, `createSignal(args)`, or `signal`.
+You can also point `--strategy` at a local module that exports `default(args)`, `createSignal(args)`, or `signal` for `backtest`, or `signalFactory(params, args)` plus `parameterSets`/`createParameterSets(args)` for `walk-forward`.
 
 ---
 
@@ -361,6 +381,7 @@ const { fetchHistorical } = require("tradelab/data");
 |---|---|
 | [Backtest engine](docs/backtest-engine.md) | Signal contract, all options, result shape, portfolio mode, walk-forward |
 | [Data, reporting, and CLI](docs/data-reporting-cli.md) | Data loading, cache behavior, exports, CLI reference |
+| [Strategy examples](docs/examples.md) | Mean reversion, breakout, sentiment, LLM, and portfolio strategy patterns |
 | [API reference](docs/api-reference.md) | Compact index of every public export |
 
 ---
@@ -368,7 +389,7 @@ const { fetchHistorical } = require("tradelab/data");
 ## Common mistakes
 
 - Using unsorted candles or mixed intervals in a single series
-- Reading `trades` as if they were always full positions — use `positions` for top-line analysis
+- Reading `trades` as if they were always full positions - use `positions` for top-line analysis
 - Leaving costs at zero and overestimating edge
 - Trusting one backtest without out-of-sample validation
 - Debugging a strategy with `strict: false` when lookahead is possible
@@ -380,4 +401,4 @@ const { fetchHistorical } = require("tradelab/data");
 - Node `18+` is required
 - Yahoo downloads are cached under `output/data` by default
 - CommonJS and ESM are both supported
-- The engine is built for historical research — not brokerage execution, tick-level simulation, or exchange microstructure modeling
+- The engine is built for historical research - not brokerage execution or full exchange microstructure simulation

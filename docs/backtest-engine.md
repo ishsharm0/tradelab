@@ -1,8 +1,12 @@
 # Backtest engine
 
+<small>[Back to main page](README.md)</small>
+
+
 This page covers the simulation layer:
 
 - `backtest(options)`
+- `backtestTicks(options)`
 - `backtestPortfolio(options)`
 - `walkForwardOptimize(options)`
 - `buildMetrics(input)`
@@ -16,8 +20,9 @@ Use the engine layer when you already have candles and want to simulate strategy
 | Use case | Function |
 | --- | --- |
 | One strategy on one candle series | `backtest()` |
+| One strategy on tick or quote data | `backtestTicks()` |
 | Multiple symbols with one combined result | `backtestPortfolio()` |
-| Rolling train/test validation | `walkForwardOptimize()` |
+| Rolling or anchored train/test validation | `walkForwardOptimize()` |
 | Recompute metrics from realized trades | `buildMetrics()` |
 
 ## Candle input
@@ -298,25 +303,47 @@ const result = backtestPortfolio({
 
 ### How it works
 
-- capital is allocated up front by weight
-- each system runs through the normal single-symbol engine
-- the portfolio result merges trades, positions, replay events, and equity series
+- systems share one live capital pool
+- `weight` or `allocation: "equal" | "weight"` defines the default per-system cap, not a pre-funded sleeve
+- fills lock capital immediately, later fills size against remaining available capital
+- `eqSeries` points include `lockedCapital` and `availableCapital`
+- `maxDailyLossPct` can halt all systems for the rest of the day once breached
 
 ### What it is not
 
 - a cross-margin broker simulator
-- a portfolio-level fill arbiter
-- a shared capital-locking engine
+- a prime-broker margin model
+- a full portfolio optimizer
 
-If you need shared real-time portfolio constraints, this is not that tool yet.
+This mode now does enforce shared capital and cross-system sizing, but it still uses the library's research-oriented execution assumptions rather than full broker accounting.
+
+## `backtestTicks(options)`
+
+Use tick mode when you want event-driven fills while keeping the same result shape as `backtest()`.
+
+```js
+const result = backtestTicks({
+  ticks,
+  queueFillProbability: 0.5,
+  signal,
+});
+```
+
+### How it works
+
+- market entries fill on the next tick
+- limit orders can fill at the touch based on `queueFillProbability`
+- stop exits fill at the stop and use the normal stop slippage model from `costs.slippageByKind.stop`
+- results still come back as `trades`, `positions`, `metrics`, `eqSeries`, and `replay`
 
 ## `walkForwardOptimize(options)`
 
-Use walk-forward mode when one in-sample backtest is not enough and you want rolling train/test validation.
+Use walk-forward mode when one in-sample backtest is not enough and you want rolling or anchored train/test validation.
 
 ```js
 const wf = walkForwardOptimize({
   candles,
+  mode: "anchored",
   trainBars: 180,
   testBars: 60,
   stepBars: 60,
@@ -336,13 +363,14 @@ const wf = walkForwardOptimize({
 1. Evaluate every parameter set on the training slice
 2. Pick the best one by `scoreBy`
 3. Run that parameter set on the next test slice
-4. Repeat for each window
+4. Repeat for each window using either rolling or anchored training windows
 
 ### Return value
 
 - `windows`: per-window summaries and chosen parameters
 - `trades`, `positions`, `metrics`, `eqSeries`
-- `bestParams`: chosen parameters for each window
+- `bestParams`: chosen parameters for each window plus a stability summary
+- `bestParamsSummary`: adjacent repeat rate, dominant winner, and winner leaderboard
 
 In practice, the per-window output matters more than the aggregate headline. If the winning parameters swing wildly from one window to the next, treat that as a real signal.
 
@@ -361,3 +389,5 @@ Most users do not need this directly. Use it when:
 - leaving costs at zero and overestimating edge
 - trusting one backtest without out-of-sample validation
 - debugging a strategy with `strict: false` when lookahead is possible
+
+<small>[Back to main page](README.md)</small>

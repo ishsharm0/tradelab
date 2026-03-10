@@ -1,4 +1,5 @@
 export { backtest } from "./engine/backtest.js";
+export { backtestTicks } from "./engine/backtestTicks.js";
 export { backtestPortfolio } from "./engine/portfolio.js";
 export { walkForwardOptimize } from "./engine/walkForward.js";
 

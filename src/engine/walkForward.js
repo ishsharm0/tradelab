@@ -19,6 +19,73 @@ function stitchEquitySeries(target, source) {
   target.push(...nextPoints);
 }
 
+function canonicalParams(params) {
+  const entries = Object.entries(params || {}).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return JSON.stringify(Object.fromEntries(entries));
+}
+
+function buildWindowRanges(length, trainBars, testBars, stepBars, mode) {
+  const ranges = [];
+  for (
+    let start = 0;
+    start + trainBars + testBars <= length;
+    start += stepBars
+  ) {
+    const trainStart = mode === "anchored" ? 0 : start;
+    const trainEnd = mode === "anchored" ? trainBars + start : start + trainBars;
+    const testStart = trainEnd;
+    const testEnd = testStart + testBars;
+    if (testEnd > length) break;
+    ranges.push({ trainStart, trainEnd, testStart, testEnd });
+  }
+  return ranges;
+}
+
+function summarizeBestParams(windows) {
+  const summaryBySignature = new Map();
+  let adjacentRepeats = 0;
+
+  windows.forEach((window, index) => {
+    const signature = window.bestParamsSignature ?? canonicalParams(window.bestParams);
+    const current = summaryBySignature.get(signature) || {
+      params: window.bestParams,
+      wins: 0,
+      profitableWindows: 0,
+      oosTrades: 0,
+    };
+    current.wins += 1;
+    current.profitableWindows += window.profitable ? 1 : 0;
+    current.oosTrades += window.oosTrades;
+    summaryBySignature.set(signature, current);
+
+    if (
+      index > 0 &&
+      (windows[index - 1].bestParamsSignature ??
+        canonicalParams(windows[index - 1].bestParams)) === signature
+    ) {
+      adjacentRepeats += 1;
+    }
+  });
+
+  const byFrequency = [...summaryBySignature.values()].sort((left, right) => {
+    if (right.wins !== left.wins) return right.wins - left.wins;
+    return right.profitableWindows - left.profitableWindows;
+  });
+  const adjacentPairs = Math.max(0, windows.length - 1);
+
+  return {
+    winners: windows.map((window) => window.bestParams),
+    stability: {
+      adjacentRepeatRate: adjacentPairs ? adjacentRepeats / adjacentPairs : 0,
+      uniqueWinnerCount: summaryBySignature.size,
+      dominant: byFrequency[0] || null,
+      leaderboard: byFrequency,
+    },
+  };
+}
+
 /**
  * Run rolling walk-forward optimization over a single candle series.
  *
@@ -32,6 +99,7 @@ export function walkForwardOptimize({
   trainBars,
   testBars,
   stepBars = testBars,
+  mode = "rolling",
   scoreBy = "profitFactor",
   backtestOptions = {},
 } = {}) {
@@ -47,25 +115,31 @@ export function walkForwardOptimize({
   if (!(trainBars > 0) || !(testBars > 0) || !(stepBars > 0)) {
     throw new Error("walkForwardOptimize() requires positive trainBars, testBars, and stepBars");
   }
+  if (mode !== "rolling" && mode !== "anchored") {
+    throw new Error('walkForwardOptimize() mode must be "rolling" or "anchored"');
+  }
 
   const windows = [];
   const allTrades = [];
   const allPositions = [];
   const eqSeries = [];
   let rollingEquity = backtestOptions.equity ?? 10_000;
+  const ranges = buildWindowRanges(candles.length, trainBars, testBars, stepBars, mode);
+  const trainBacktestOptions = {
+    ...backtestOptions,
+    collectEqSeries: false,
+    collectReplay: false,
+  };
+  const testBacktestOptions = { ...backtestOptions };
 
-  for (
-    let start = 0;
-    start + trainBars + testBars <= candles.length;
-    start += stepBars
-  ) {
-    const trainSlice = candles.slice(start, start + trainBars);
-    const testSlice = candles.slice(start + trainBars, start + trainBars + testBars);
+  for (const range of ranges) {
+    const trainSlice = candles.slice(range.trainStart, range.trainEnd);
+    const testSlice = candles.slice(range.testStart, range.testEnd);
 
     let best = null;
     for (const params of parameterSets) {
       const trainResult = backtest({
-        ...backtestOptions,
+        ...trainBacktestOptions,
         candles: trainSlice,
         equity: rollingEquity,
         signal: signalFactory(params),
@@ -77,11 +151,12 @@ export function walkForwardOptimize({
     }
 
     const testResult = backtest({
-      ...backtestOptions,
+      ...testBacktestOptions,
       candles: testSlice,
       equity: rollingEquity,
       signal: signalFactory(best.params),
     });
+    const bestParamsSignature = canonicalParams(best.params);
 
     rollingEquity = testResult.metrics.finalEquity;
     allTrades.push(...testResult.trades);
@@ -101,8 +176,27 @@ export function walkForwardOptimize({
       trainScore: best.score,
       trainMetrics: best.metrics,
       testMetrics: testResult.metrics,
+      oosTrades: testResult.metrics.trades,
+      profitable: testResult.metrics.totalPnL > 0,
+      stabilityScore: 0,
+      bestParamsSignature,
       result: testResult,
     });
+  }
+
+  for (let index = 0; index < windows.length; index += 1) {
+    const currentSignature = windows[index].bestParamsSignature;
+    const adjacent = [];
+    if (index > 0) {
+      adjacent.push(windows[index - 1].bestParamsSignature === currentSignature ? 1 : 0);
+    }
+    if (index + 1 < windows.length) {
+      adjacent.push(windows[index + 1].bestParamsSignature === currentSignature ? 1 : 0);
+    }
+    windows[index].stabilityScore = adjacent.length
+      ? adjacent.reduce((total, value) => total + value, 0) / adjacent.length
+      : 1;
+    delete windows[index].bestParamsSignature;
   }
 
   const metrics = buildMetrics({
@@ -113,6 +207,7 @@ export function walkForwardOptimize({
     estBarMs: estimateBarMs(candles),
     eqSeries,
   });
+  const bestParamsSummary = summarizeBestParams(windows);
 
   return {
     windows,
@@ -121,6 +216,7 @@ export function walkForwardOptimize({
     metrics,
     eqSeries,
     replay: { frames: [], events: [] },
-    bestParams: windows.map((window) => window.bestParams),
+    bestParams: Object.assign(windows.map((window) => window.bestParams), bestParamsSummary),
+    bestParamsSummary: bestParamsSummary.stability,
   };
 }

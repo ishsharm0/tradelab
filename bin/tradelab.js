@@ -48,6 +48,11 @@ function toList(value, fallback) {
     .filter((item) => Number.isFinite(item));
 }
 
+function parseJsonValue(value, fallback = null) {
+  if (!value) return fallback;
+  return JSON.parse(String(value));
+}
+
 function createEmaCrossSignal({
   fast = 10,
   slow = 30,
@@ -133,13 +138,70 @@ async function loadStrategy(strategyArg, args) {
   throw new Error(`Strategy module "${strategyArg}" must export default, createSignal, or signal`);
 }
 
+async function loadWalkForwardStrategy(strategyArg, args) {
+  if (!strategyArg || strategyArg === "ema-cross") {
+    const fasts = toList(args.fasts, [8, 10, 12]);
+    const slows = toList(args.slows, [20, 30, 40]);
+    const rrs = toList(args.rrs, [1.5, 2, 3]);
+    const parameterSets = [];
+
+    for (const fast of fasts) {
+      for (const slow of slows) {
+        if (fast >= slow) continue;
+        for (const rr of rrs) {
+          parameterSets.push({ fast, slow, rr });
+        }
+      }
+    }
+
+    return {
+      parameterSets,
+      signalFactory(params) {
+        return createEmaCrossSignal({
+          fast: params.fast,
+          slow: params.slow,
+          rr: params.rr,
+          stopLookback: toNumber(args.stopLookback, 15),
+        });
+      },
+    };
+  }
+
+  const resolved = path.resolve(process.cwd(), strategyArg);
+  const module = await import(pathToFileURL(resolved).href);
+  if (typeof module.signalFactory !== "function") {
+    throw new Error(
+      `Walk-forward strategy module "${strategyArg}" must export signalFactory`
+    );
+  }
+
+  const parameterSets =
+    parseJsonValue(args.parameterSets) ??
+    (typeof module.createParameterSets === "function"
+      ? await module.createParameterSets(args)
+      : module.parameterSets);
+
+  if (!Array.isArray(parameterSets) || parameterSets.length === 0) {
+    throw new Error(
+      `Walk-forward strategy module "${strategyArg}" must provide parameterSets, createParameterSets(args), or --parameterSets`
+    );
+  }
+
+  return {
+    parameterSets,
+    signalFactory(params) {
+      return module.signalFactory(params, args);
+    },
+  };
+}
+
 function printHelp() {
   console.log(`tradelab
 
 Commands:
   backtest      Run a one-off backtest from Yahoo or CSV data
   portfolio     Run multiple CSV datasets as an equal-weight portfolio
-  walk-forward  Run rolling train/test optimization with the built-in ema-cross strategy
+  walk-forward  Run rolling or anchored train/test optimization
   prefetch      Download Yahoo candles into the local cache
   import-csv    Normalize a CSV and save it into the local cache
 
@@ -257,26 +319,15 @@ async function commandWalkForward(args) {
     csvPath: args.csvPath,
     cache: args.cache !== "false",
   });
-  const fasts = toList(args.fasts, [8, 10, 12]);
-  const slows = toList(args.slows, [20, 30, 40]);
-  const rrs = toList(args.rrs, [1.5, 2, 3]);
-  const parameterSets = [];
-
-  for (const fast of fasts) {
-    for (const slow of slows) {
-      if (fast >= slow) continue;
-      for (const rr of rrs) {
-        parameterSets.push({ fast, slow, rr });
-      }
-    }
-  }
+  const walkForwardStrategy = await loadWalkForwardStrategy(args.strategy, args);
 
   const result = walkForwardOptimize({
     candles,
-    parameterSets,
+    parameterSets: walkForwardStrategy.parameterSets,
     trainBars: toNumber(args.trainBars, 120),
     testBars: toNumber(args.testBars, 40),
     stepBars: toNumber(args.stepBars, toNumber(args.testBars, 40)),
+    mode: args.mode || "rolling",
     scoreBy: args.scoreBy || "profitFactor",
     backtestOptions: {
       symbol: args.symbol || "DATA",
@@ -286,14 +337,7 @@ async function commandWalkForward(args) {
       riskPct: toNumber(args.riskPct, 1),
       warmupBars: toNumber(args.warmupBars, 20),
     },
-    signalFactory(params) {
-      return createEmaCrossSignal({
-        fast: params.fast,
-        slow: params.slow,
-        rr: params.rr,
-        stopLookback: toNumber(args.stopLookback, 15),
-      });
-    },
+    signalFactory: walkForwardStrategy.signalFactory,
   });
 
   const metricsPath = exportMetricsJSON({
@@ -310,6 +354,7 @@ async function commandWalkForward(args) {
         windows: result.windows.length,
         positions: result.positions.length,
         finalEquity: result.metrics.finalEquity,
+        bestParamsSummary: result.bestParamsSummary,
         metricsPath,
       },
       null,

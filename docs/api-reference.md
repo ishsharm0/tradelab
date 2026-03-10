@@ -1,4 +1,6 @@
+
 # API reference
+<small>[Back to main page](README.md)</small>
 
 This page is the compact index of public exports.
 
@@ -9,8 +11,9 @@ If you are learning the package, start with [backtest-engine.md](backtest-engine
 | Export | Summary |
 | --- | --- |
 | `backtest(options)` | Run one strategy on one candle series |
-| `backtestPortfolio(options)` | Run multiple systems and merge the result |
-| `walkForwardOptimize(options)` | Run rolling train/test validation |
+| `backtestTicks(options)` | Run one strategy on tick or quote data |
+| `backtestPortfolio(options)` | Run multiple systems through a shared-capital portfolio engine |
+| `walkForwardOptimize(options)` | Run rolling or anchored train/test validation |
 | `buildMetrics(input)` | Compute metrics from realized trades and equity data |
 
 ## Data
@@ -68,3 +71,5 @@ If you are learning the package, start with [backtest-engine.md](backtest-engine
 ## Types
 
 The package ships declarations in [../types/index.d.ts](../types/index.d.ts). Use that file when you need the exact option and result contracts in TypeScript or editor IntelliSense.
+
+<small>[Back to main page](README.md)</small>

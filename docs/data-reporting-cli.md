@@ -1,4 +1,5 @@
 # Data, reporting, and CLI
+<small>[Back to main page](README.md)</small>
 
 This page covers the parts of the package around the core engine:
 
@@ -187,7 +188,7 @@ The CLI is best for quick iteration, smoke tests, and trying the package before 
 | --- | --- |
 | `tradelab backtest` | Run a single backtest from Yahoo or CSV |
 | `tradelab portfolio` | Run a simple multi-file portfolio backtest |
-| `tradelab walk-forward` | Run rolling validation with the built-in search |
+| `tradelab walk-forward` | Run rolling or anchored validation with built-in or local strategy search |
 | `tradelab prefetch` | Download and cache Yahoo data |
 | `tradelab import-csv` | Normalize and cache a CSV file |
 
@@ -231,10 +232,11 @@ tradelab walk-forward \
   --interval 1d \
   --period 2y \
   --trainBars 180 \
-  --testBars 60
+  --testBars 60 \
+  --mode anchored
 ```
 
-The CLI walk-forward command currently uses the built-in `ema-cross` parameter search.
+The CLI walk-forward command defaults to the built-in `ema-cross` search, but `--strategy ./path/to/module.mjs` can now load a local module that exports `signalFactory(params, args)` and either `parameterSets` or `createParameterSets(args)`. Inline JSON grids are also accepted through `--parameterSets`.
 
 ### Cache utilities
 
@@ -252,3 +254,5 @@ tradelab import-csv --csvPath ./data/spy.csv --symbol SPY --interval 1d
 | Empty result | candle order, signal logic, and stop/target validity |
 | Confusing CSV import | inspect normalized bars from `loadCandlesFromCSV()` before backtesting |
 | Export confusion | use metrics JSON first if you need programmatic output |
+
+<small>[Back to main page](README.md)</small>

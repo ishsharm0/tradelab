@@ -1,57 +1,35 @@
 import { buildMetrics } from "../metrics/buildMetrics.js";
-import { backtest } from "./backtest.js";
-import { estimateBarMs } from "./execution.js";
+import { estimateBarMs, dayKeyET } from "./execution.js";
+import { BarSystemRunner, defaultSystemCap } from "./barSystemRunner.js";
 
 function asWeight(value) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function combineEquitySeries(systemRuns, totalEquity) {
-  const timeline = new Set();
-  for (const run of systemRuns) {
-    for (const point of run.result.eqSeries || []) {
-      timeline.add(point.time);
-    }
-  }
-
-  const times = [...timeline].sort((left, right) => left - right);
-  if (!times.length) {
-    return [{ time: 0, timestamp: 0, equity: totalEquity }];
-  }
-
-  const states = systemRuns.map((run) => ({
-    points: run.result.eqSeries || [],
-    index: 0,
-    lastEquity: run.allocationEquity,
-  }));
-
-  return times.map((time) => {
-    let equity = 0;
-    states.forEach((state) => {
-      while (
-        state.index < state.points.length &&
-        state.points[state.index].time <= time
-      ) {
-        state.lastEquity = state.points[state.index].equity;
-        state.index += 1;
-      }
-      equity += state.lastEquity;
-    });
-
-    return { time, timestamp: time, equity };
-  });
+function buildPortfolioPoint(time, equity, lockedCapital, availableCapital) {
+  return {
+    time,
+    timestamp: time,
+    equity,
+    lockedCapital,
+    availableCapital,
+  };
 }
 
-function combineReplay(systemRuns, eqSeries, collectReplay) {
+function stableSystemOrder(left, right) {
+  return left.index - right.index;
+}
+
+function combineReplay(systemResults, eqSeries, collectReplay) {
   if (!collectReplay) {
     return { frames: [], events: [] };
   }
 
-  const events = systemRuns
-    .flatMap((run) =>
-      (run.result.replay?.events || []).map((event) => ({
+  const events = systemResults
+    .flatMap((entry) =>
+      (entry.result.replay?.events || []).map((event) => ({
         ...event,
-        symbol: event.symbol || run.symbol,
+        symbol: event.symbol || entry.symbol,
       }))
     )
     .sort((left, right) => new Date(left.t).getTime() - new Date(right.t).getTime());
@@ -62,17 +40,82 @@ function combineReplay(systemRuns, eqSeries, collectReplay) {
     equity: point.equity,
     posSide: null,
     posSize: 0,
+    lockedCapital: point.lockedCapital,
+    availableCapital: point.availableCapital,
   }));
 
   return { frames, events };
 }
 
+function portfolioState(runners, initialEquity) {
+  let markedEquity = initialEquity;
+  let lockedCapital = 0;
+
+  for (const { runner, initialReferenceEquity } of runners) {
+    markedEquity += runner.getMarkedEquity() - initialReferenceEquity;
+    lockedCapital += runner.getLockedCapital();
+  }
+
+  return {
+    markedEquity,
+    lockedCapital,
+    availableCapital: markedEquity - lockedCapital,
+  };
+}
+
+function findNextTimeAndActive(runners) {
+  let nextTime = Infinity;
+  const active = [];
+
+  for (const entry of runners) {
+    const time = entry.runner.peekTime();
+    if (time < nextTime) {
+      nextTime = time;
+      active.length = 0;
+      active.push(entry);
+      continue;
+    }
+    if (time === nextTime) {
+      active.push(entry);
+    }
+  }
+
+  return { nextTime, active };
+}
+
+function initialPortfolioTime(runners) {
+  let time = Infinity;
+  for (const { runner } of runners) {
+    const next = runner.candles[0]?.time ?? Infinity;
+    if (next < time) time = next;
+  }
+  return Number.isFinite(time) ? time : 0;
+}
+
+function resolveSystemCap(systemEntry, totalEquity) {
+  return defaultSystemCap(
+    Math.max(0, totalEquity),
+    systemEntry.defaultCapPct,
+    systemEntry.system.maxAllocation,
+    systemEntry.system.maxAllocationPct
+  );
+}
+
+function forceExitAll(runners, time) {
+  for (const { runner } of runners) {
+    if (!runner.open) continue;
+    const price = runner.getMarkPrice();
+    if (!Number.isFinite(price)) continue;
+    runner.forceExit("PORTFOLIO_DAILY_LOSS", { time, close: price }, price);
+  }
+}
+
 /**
- * Run multiple symbol/system backtests and aggregate them into a portfolio view.
+ * Run multiple systems against a shared capital pool.
  *
- * Capital is allocated up front per system using weights. Each system then runs
- * through the normal single-symbol backtest engine and the portfolio result
- * aggregates trades, positions, equity, replay events, and metrics.
+ * Existing allocation weights are preserved as default per-system capital caps,
+ * but capital is only locked when a fill actually occurs. Systems therefore
+ * compete for the same remaining capital at fill time.
  */
 export function backtestPortfolio({
   systems = [],
@@ -80,6 +123,7 @@ export function backtestPortfolio({
   allocation = "equal",
   collectEqSeries = true,
   collectReplay = false,
+  maxDailyLossPct = 0,
 } = {}) {
   if (!Array.isArray(systems) || systems.length === 0) {
     throw new Error("backtestPortfolio() requires a non-empty systems array");
@@ -89,30 +133,115 @@ export function backtestPortfolio({
     allocation === "equal"
       ? systems.map(() => 1)
       : systems.map((system) => asWeight(system.weight || 0));
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const totalWeight = weights.reduce((sumValue, weight) => sumValue + weight, 0);
 
   if (!(totalWeight > 0)) {
     throw new Error("backtestPortfolio() requires positive allocation weights");
   }
 
-  const systemRuns = systems.map((system, index) => {
-    const allocationEquity = equity * (weights[index] / totalWeight);
-    const result = backtest({
-      ...system,
-      equity: allocationEquity,
-      collectEqSeries,
-      collectReplay,
-    });
-
+  const runners = systems.map((system, index) => {
+    const defaultCapPct = weights[index] / totalWeight;
+    const initialReferenceEquity = equity * defaultCapPct;
     return {
-      symbol: system.symbol ?? result.symbol ?? `system-${index + 1}`,
-      weight: weights[index],
-      allocationEquity,
-      result,
+      index,
+      symbol: system.symbol ?? `system-${index + 1}`,
+      system,
+      defaultCapPct,
+      initialReferenceEquity,
+      runner: new BarSystemRunner({
+        ...system,
+        symbol: system.symbol ?? `system-${index + 1}`,
+        equity: initialReferenceEquity,
+        collectEqSeries,
+        collectReplay,
+      }),
     };
   });
 
-  const trades = systemRuns
+  const eqSeries = collectEqSeries ? [] : [];
+  let state = portfolioState(runners, equity);
+  if (collectEqSeries) {
+    eqSeries.push(
+      buildPortfolioPoint(
+        initialPortfolioTime(runners),
+        state.markedEquity,
+        state.lockedCapital,
+        state.availableCapital
+      )
+    );
+  }
+
+  let currentDay = null;
+  let dayStartEquity = equity;
+  let portfolioHalted = false;
+
+  while (true) {
+    const { nextTime, active } = findNextTimeAndActive(runners);
+    if (!Number.isFinite(nextTime)) break;
+    active.sort(stableSystemOrder);
+
+    const dayKey = dayKeyET(nextTime);
+    if (currentDay === null || dayKey !== currentDay) {
+      currentDay = dayKey;
+      state = portfolioState(runners, equity);
+      dayStartEquity = state.markedEquity;
+      portfolioHalted = false;
+    }
+
+    for (const systemEntry of active) {
+      state = portfolioState(runners, equity);
+      const totalEquity = state.markedEquity;
+      const availableCapital = Math.max(0, state.availableCapital);
+      const systemLocked = systemEntry.runner.getLockedCapital();
+      const systemCap = resolveSystemCap(systemEntry, totalEquity);
+      const systemRemainingCapital = Math.max(0, systemCap - systemLocked);
+
+      systemEntry.runner.step({
+        signalEquity: totalEquity,
+        canTrade: !portfolioHalted,
+        resolveEntrySize({ desiredSize, entryPrice }) {
+          const maxLeverage = Math.max(1, systemEntry.runner.options.maxLeverage || 1);
+          const byAvailable = (availableCapital * maxLeverage) / Math.max(1e-12, Math.abs(entryPrice));
+          const bySystemCap = (systemRemainingCapital * maxLeverage) / Math.max(1e-12, Math.abs(entryPrice));
+          return Math.min(desiredSize, byAvailable, bySystemCap);
+        },
+      });
+
+      state = portfolioState(runners, equity);
+      if (
+        !portfolioHalted &&
+        maxDailyLossPct > 0 &&
+        state.markedEquity <= dayStartEquity * (1 - Math.abs(maxDailyLossPct) / 100)
+      ) {
+        portfolioHalted = true;
+        for (const { runner } of runners) runner.cancelPending();
+        forceExitAll(runners, nextTime);
+        state = portfolioState(runners, equity);
+      }
+    }
+
+    if (collectEqSeries) {
+      eqSeries.push(
+        buildPortfolioPoint(
+          nextTime,
+          state.markedEquity,
+          state.lockedCapital,
+          state.availableCapital
+        )
+      );
+    }
+  }
+
+  const systemResults = runners.map((entry) => ({
+    symbol: entry.symbol,
+    weight: entry.defaultCapPct,
+    equity: entry.initialReferenceEquity,
+    allocationCapPct: entry.defaultCapPct,
+    allocationCap: resolveSystemCap(entry, equity),
+    result: entry.runner.buildResult(),
+  }));
+
+  const trades = systemResults
     .flatMap((run) =>
       run.result.trades.map((trade) => ({
         ...trade,
@@ -120,7 +249,7 @@ export function backtestPortfolio({
       }))
     )
     .sort((left, right) => left.exit.time - right.exit.time);
-  const positions = systemRuns
+  const positions = systemResults
     .flatMap((run) =>
       run.result.positions.map((trade) => ({
         ...trade,
@@ -128,8 +257,7 @@ export function backtestPortfolio({
       }))
     )
     .sort((left, right) => left.exit.time - right.exit.time);
-  const eqSeries = collectEqSeries ? combineEquitySeries(systemRuns, equity) : [];
-  const replay = combineReplay(systemRuns, eqSeries, collectReplay);
+  const replay = combineReplay(systemResults, eqSeries, collectReplay);
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
   const metrics = buildMetrics({
@@ -150,11 +278,6 @@ export function backtestPortfolio({
     metrics,
     eqSeries,
     replay,
-    systems: systemRuns.map((run) => ({
-      symbol: run.symbol,
-      weight: run.weight / totalWeight,
-      equity: run.allocationEquity,
-      result: run.result,
-    })),
+    systems: systemResults,
   };
 }

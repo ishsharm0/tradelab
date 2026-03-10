@@ -10,6 +10,20 @@ export interface Candle {
   [key: string]: unknown;
 }
 
+export interface Tick {
+  time: number;
+  price?: number;
+  last?: number;
+  bid?: number;
+  ask?: number;
+  high?: number;
+  low?: number;
+  close?: number;
+  size?: number;
+  volume?: number;
+  [key: string]: unknown;
+}
+
 /** Realized equity snapshot captured during a backtest. */
 export interface EquityPoint {
   /** Bar timestamp in Unix milliseconds. */
@@ -18,6 +32,10 @@ export interface EquityPoint {
   timestamp: number;
   /** Realized account equity at this point in the run. */
   equity: number;
+  /** Capital currently locked by open positions, when available. */
+  lockedCapital?: number;
+  /** Capital currently available for new positions, when available. */
+  availableCapital?: number;
 }
 
 /** Lightweight chart frame for replay/export consumers. */
@@ -32,6 +50,8 @@ export interface ReplayFrame {
   posSide: Side | null;
   /** Active position size at the frame time. */
   posSize: number;
+  lockedCapital?: number;
+  availableCapital?: number;
 }
 
 /** Replay event emitted for entries, exits, adds, and scale-outs. */
@@ -301,6 +321,29 @@ export interface BacktestOptions {
   strict?: boolean;
 }
 
+export interface BacktestTickOptions {
+  ticks: Tick[];
+  symbol?: string;
+  equity?: number;
+  riskPct?: number;
+  signal: SignalFunction;
+  interval?: string;
+  range?: string;
+  slippageBps?: number;
+  feeBps?: number;
+  costs?: ExecutionCostOptions;
+  finalTP_R?: number;
+  maxDailyLossPct?: number;
+  dailyMaxTrades?: number;
+  qtyStep?: number;
+  minQty?: number;
+  maxLeverage?: number;
+  collectEqSeries?: boolean;
+  collectReplay?: boolean;
+  queueFillProbability?: number;
+  oco?: OCOOptions;
+}
+
 /** Full result payload returned by `backtest()`. */
 export interface BacktestResult {
   symbol?: string;
@@ -320,12 +363,16 @@ export interface BacktestResult {
 
 export interface PortfolioSystem extends Omit<BacktestOptions, "equity"> {
   weight?: number;
+  maxAllocation?: number;
+  maxAllocationPct?: number;
 }
 
 export interface PortfolioSystemResult {
   symbol: string;
   weight: number;
   equity: number;
+  allocationCapPct?: number;
+  allocationCap?: number;
   result: BacktestResult;
 }
 
@@ -340,12 +387,38 @@ export interface WalkForwardWindow {
   trainScore: number;
   trainMetrics: BacktestMetrics;
   testMetrics: BacktestMetrics;
+  oosTrades: number;
+  profitable: boolean;
+  stabilityScore: number;
   result: BacktestResult;
+}
+
+export interface WalkForwardBestParamsSummary {
+  adjacentRepeatRate: number;
+  uniqueWinnerCount: number;
+  dominant: {
+    params: Record<string, unknown>;
+    wins: number;
+    profitableWindows: number;
+    oosTrades: number;
+  } | null;
+  leaderboard: Array<{
+    params: Record<string, unknown>;
+    wins: number;
+    profitableWindows: number;
+    oosTrades: number;
+  }>;
+}
+
+export interface WalkForwardBestParams extends Array<Record<string, unknown>> {
+  winners: Array<Record<string, unknown>>;
+  stability: WalkForwardBestParamsSummary;
 }
 
 export interface WalkForwardResult extends BacktestResult {
   windows: WalkForwardWindow[];
-  bestParams: Array<Record<string, unknown>>;
+  bestParams: WalkForwardBestParams;
+  bestParamsSummary: WalkForwardBestParamsSummary;
 }
 
 export interface CsvLoadOptions {
@@ -459,12 +532,14 @@ export interface ArtifactPaths {
  * chart-friendly replay frames/events in `replay`.
  */
 export function backtest(options: BacktestOptions): BacktestResult;
+export function backtestTicks(options: BacktestTickOptions): BacktestResult;
 export function backtestPortfolio(options: {
   systems: PortfolioSystem[];
   equity?: number;
   allocation?: "equal" | "weight";
   collectEqSeries?: boolean;
   collectReplay?: boolean;
+  maxDailyLossPct?: number;
 }): PortfolioBacktestResult;
 export function walkForwardOptimize(options: {
   candles: Candle[];
@@ -473,6 +548,7 @@ export function walkForwardOptimize(options: {
   trainBars: number;
   testBars: number;
   stepBars?: number;
+  mode?: "rolling" | "anchored";
   scoreBy?: keyof BacktestMetrics;
   backtestOptions?: Omit<BacktestOptions, "candles" | "signal">;
 }): WalkForwardResult;
