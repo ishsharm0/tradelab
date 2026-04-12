@@ -7,7 +7,7 @@
   "module": "./src/index.js",
   "types": "./types/index.d.ts",
   "bin": {
-    "tradelab": "./bin/tradelab.js"
+    "tradelab": "bin/tradelab.js"
   },
   "license": "MIT",
   "repository": {
