@@ -17,20 +17,10 @@ export function applyFill(
   { slippageBps = 0, feeBps = 0, kind = "market", qty = 0, costs = {} } = {}
 ) {
   const model = costs || {};
-  const modelSlippageBps = Number.isFinite(model.slippageBps)
-    ? model.slippageBps
-    : slippageBps;
-  const modelFeeBps = Number.isFinite(model.commissionBps)
-    ? model.commissionBps
-    : feeBps;
-  const effectiveSlippageBps = resolveSlippageBps(
-    kind,
-    modelSlippageBps,
-    model.slippageByKind
-  );
-  const halfSpreadBps = Number.isFinite(model.spreadBps)
-    ? model.spreadBps / 2
-    : 0;
+  const modelSlippageBps = Number.isFinite(model.slippageBps) ? model.slippageBps : slippageBps;
+  const modelFeeBps = Number.isFinite(model.commissionBps) ? model.commissionBps : feeBps;
+  const effectiveSlippageBps = resolveSlippageBps(kind, modelSlippageBps, model.slippageByKind);
+  const halfSpreadBps = Number.isFinite(model.spreadBps) ? model.spreadBps / 2 : 0;
 
   const slippage = ((effectiveSlippageBps + halfSpreadBps) / 10000) * price;
   const filledPrice = side === "long" ? price + slippage : price - slippage;
@@ -38,16 +28,13 @@ export function applyFill(
     ((modelFeeBps || 0) / 10000) * Math.abs(filledPrice) +
     (Number.isFinite(model.commissionPerUnit) ? model.commissionPerUnit : 0);
   const variableFeeTotal = variableFeePerUnit * Math.max(0, qty);
-  const fixedFeeTotal = Number.isFinite(model.commissionPerOrder)
-    ? model.commissionPerOrder
-    : 0;
+  const fixedFeeTotal = Number.isFinite(model.commissionPerOrder) ? model.commissionPerOrder : 0;
   const grossFeeTotal = variableFeeTotal + fixedFeeTotal;
   const feeTotal = Math.max(
     Number.isFinite(model.minCommission) ? model.minCommission : 0,
     grossFeeTotal
   );
-  const feePerUnit =
-    qty > 0 ? feeTotal / qty : variableFeePerUnit;
+  const feePerUnit = qty > 0 ? feeTotal / qty : variableFeePerUnit;
 
   return { price: filledPrice, fee: feePerUnit, feeTotal };
 }
@@ -63,21 +50,12 @@ export function clampStop(marketPrice, proposedStop, side, oco) {
 export function touchedLimit(side, limitPrice, bar, mode = "intrabar") {
   if (!bar || limitPrice === undefined || limitPrice === null) return false;
   if (mode === "close") {
-    return side === "long"
-      ? bar.close <= limitPrice
-      : bar.close >= limitPrice;
+    return side === "long" ? bar.close <= limitPrice : bar.close >= limitPrice;
   }
   return side === "long" ? bar.low <= limitPrice : bar.high >= limitPrice;
 }
 
-export function ocoExitCheck({
-  side,
-  stop,
-  tp,
-  bar,
-  mode = "intrabar",
-  tieBreak = "pessimistic",
-}) {
+export function ocoExitCheck({ side, stop, tp, bar, mode = "intrabar", tieBreak = "pessimistic" }) {
   if (mode === "close") {
     const close = bar.close;
     if (side === "long") {
@@ -94,9 +72,7 @@ export function ocoExitCheck({
   const hitTarget = side === "long" ? bar.high >= tp : bar.low <= tp;
 
   if (hitStop && hitTarget) {
-    return tieBreak === "optimistic"
-      ? { hit: "TP", px: tp }
-      : { hit: "SL", px: stop };
+    return tieBreak === "optimistic" ? { hit: "TP", px: tp } : { hit: "SL", px: stop };
   }
 
   if (hitStop) return { hit: "SL", px: stop };
@@ -123,10 +99,7 @@ export function estimateBarMs(candles) {
     if (deltas.length) {
       deltas.sort((a, b) => a - b);
       const middle = Math.floor(deltas.length / 2);
-      const median =
-        deltas.length % 2
-          ? deltas[middle]
-          : (deltas[middle - 1] + deltas[middle]) / 2;
+      const median = deltas.length % 2 ? deltas[middle] : (deltas[middle - 1] + deltas[middle]) / 2;
       return Math.max(60e3, Math.min(median, 60 * 60e3));
     }
   }
@@ -151,7 +124,6 @@ export function dayKeyET(timeMs) {
   const anchor = new Date(
     Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0)
   );
-  const pseudoEtTime =
-    anchor.getTime() + hoursET * 60 * 60 * 1000 + minutesETDay * 60 * 1000;
+  const pseudoEtTime = anchor.getTime() + hoursET * 60 * 60 * 1000 + minutesETDay * 60 * 1000;
   return dayKeyUTC(pseudoEtTime);
 }

@@ -1,10 +1,6 @@
 #!/usr/bin/env node
 
-import {
-  candleStats,
-  loadCandlesFromCSV,
-  saveCandlesToCache,
-} from "../src/index.js";
+import { candleStats, loadCandlesFromCSV, saveCandlesToCache } from "../src/index.js";
 
 function parseArgs(argv) {
   const args = {};

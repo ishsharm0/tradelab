@@ -5,6 +5,8 @@ import {
   backtest,
   backtestTicks,
   backtestPortfolio,
+  buildMetrics,
+  calculatePositionSize,
   walkForwardOptimize,
 } from "../src/index.js";
 
@@ -128,8 +130,22 @@ test("backtestPortfolio aggregates multiple systems into one result", () => {
   const result = backtestPortfolio({
     equity: 10_000,
     systems: [
-      { symbol: "AAA", candles: candlesA, signal: strategy, warmupBars: 1, flattenAtClose: false, collectReplay: false },
-      { symbol: "BBB", candles: candlesB, signal: strategy, warmupBars: 1, flattenAtClose: false, collectReplay: false },
+      {
+        symbol: "AAA",
+        candles: candlesA,
+        signal: strategy,
+        warmupBars: 1,
+        flattenAtClose: false,
+        collectReplay: false,
+      },
+      {
+        symbol: "BBB",
+        candles: candlesB,
+        signal: strategy,
+        warmupBars: 1,
+        flattenAtClose: false,
+        collectReplay: false,
+      },
     ],
   });
 
@@ -380,4 +396,178 @@ test("backtestTicks models queue-position fill probability for limit orders", ()
 
   assert.equal(filled.positions.length, 1);
   assert.equal(skipped.positions.length, 0);
+});
+
+test("backtest surfaces signal callback errors with bar context", () => {
+  const candles = buildCandles(6);
+  assert.throws(() => {
+    backtest({
+      candles,
+      warmupBars: 1,
+      collectEqSeries: false,
+      collectReplay: false,
+      signal() {
+        throw new Error("boom");
+      },
+    });
+  }, /signal\(\) threw at index=1, time=.*symbol=UNKNOWN: boom/);
+});
+
+test("backtest returns openPositions when data ends with an active trade", () => {
+  const candles = buildCandles(5);
+  const result = backtest({
+    candles,
+    warmupBars: 1,
+    flattenAtClose: false,
+    collectEqSeries: false,
+    collectReplay: false,
+    signal({ index, bar }) {
+      if (index !== 1) return null;
+      return {
+        side: "buy",
+        entry: bar.close,
+        stop: bar.close - 100,
+        takeProfit: bar.close + 1_000,
+        qty: 1,
+      };
+    },
+  });
+
+  assert.equal(result.positions.length, 0);
+  assert.equal(result.openPositions.length, 1);
+  assert.equal(result.openPositions[0].side, "long");
+  assert.ok(Number.isFinite(result.openPositions[0].unrealizedPnl));
+});
+
+test("backtestTicks surfaces signal callback errors with tick context", () => {
+  const ticks = [
+    { time: Date.UTC(2025, 0, 2, 14, 30), price: 100 },
+    { time: Date.UTC(2025, 0, 2, 14, 31), price: 101 },
+  ];
+
+  assert.throws(() => {
+    backtestTicks({
+      ticks,
+      collectReplay: false,
+      signal() {
+        throw new Error("tick-boom");
+      },
+    });
+  }, /signal\(\) threw at index=0, time=.*symbol=UNKNOWN: tick-boom/);
+});
+
+test("walkForwardOptimize throws when window config yields no train/test windows", () => {
+  const candles = buildCandles(10);
+  assert.throws(() => {
+    walkForwardOptimize({
+      candles,
+      trainBars: 8,
+      testBars: 4,
+      stepBars: 2,
+      parameterSets: [{ a: 1 }],
+      signalFactory() {
+        return () => null;
+      },
+    });
+  }, /produced zero windows/);
+});
+
+test("backtestPortfolio supports deterministic shuffled system ordering", () => {
+  const candles = buildCandles(8);
+  const systems = [
+    {
+      symbol: "AAA",
+      candles,
+      warmupBars: 1,
+      collectReplay: false,
+      flattenAtClose: false,
+      signal({ index, bar }) {
+        if (index !== 1) return null;
+        return { side: "buy", entry: bar.close, stop: bar.close - 1, rr: 1, qty: 1 };
+      },
+    },
+    {
+      symbol: "BBB",
+      candles,
+      warmupBars: 1,
+      collectReplay: false,
+      flattenAtClose: false,
+      signal({ index, bar }) {
+        if (index !== 1) return null;
+        return { side: "buy", entry: bar.close, stop: bar.close - 1, rr: 1, qty: 1 };
+      },
+    },
+  ];
+
+  const first = backtestPortfolio({
+    systems,
+    processingOrder: "shuffle",
+    shuffleSeed: 7,
+  });
+  const second = backtestPortfolio({
+    systems,
+    processingOrder: "shuffle",
+    shuffleSeed: 7,
+  });
+
+  assert.equal(first.metrics.finalEquity, second.metrics.finalEquity);
+});
+
+test("buildMetrics caps profitFactor when there are no losing trades", () => {
+  const trade = {
+    side: "long",
+    entry: 100,
+    stop: 99,
+    takeProfit: 101,
+    size: 1,
+    openTime: Date.UTC(2025, 0, 2, 14, 30),
+    exit: {
+      price: 101,
+      time: Date.UTC(2025, 0, 2, 14, 35),
+      reason: "TP",
+      pnl: 10,
+    },
+    _initRisk: 1,
+  };
+
+  const metrics = buildMetrics({
+    closed: [trade],
+    equityStart: 1_000,
+    equityFinal: 1_010,
+    candles: buildCandles(2),
+    estBarMs: 60_000,
+    eqSeries: [
+      { time: trade.openTime, timestamp: trade.openTime, equity: 1_000 },
+      { time: trade.exit.time, timestamp: trade.exit.time, equity: 1_010 },
+    ],
+  });
+
+  assert.equal(Number.isFinite(metrics.profitFactor), true);
+  assert.equal(metrics.profitFactor, 1_000_000);
+});
+
+test("calculatePositionSize returns zero for non-positive equity", () => {
+  const originalWarn = console.warn;
+  let warningCount = 0;
+  console.warn = () => {
+    warningCount += 1;
+  };
+
+  try {
+    const first = calculatePositionSize({
+      equity: 0,
+      entry: 100,
+      stop: 99,
+    });
+    const second = calculatePositionSize({
+      equity: -100,
+      entry: 100,
+      stop: 99,
+    });
+    assert.equal(first, 0);
+    assert.equal(second, 0);
+    assert.equal(warningCount, 1);
+  } finally {
+    console.warn = originalWarn;
+  }
 });

@@ -1,0 +1,186 @@
+# Live trading
+
+<small>[Back to main page](README.md)</small>
+
+This guide covers the `tradelab/live` module and the live CLI commands.
+
+## Overview
+
+The live stack is built to reuse the same signal contract as backtesting:
+
+- write and validate `signal()` with `backtest()`
+- run the same signal in `LiveEngine` or `LiveOrchestrator`
+- choose a real broker adapter or `PaperEngine`
+- persist state with `JsonFileStorage` for restart safety
+
+Import path:
+
+```js
+import { LiveEngine, LiveOrchestrator, PaperEngine } from "tradelab/live";
+```
+
+## Module components
+
+| Component                                                                        | Purpose                                                              |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `LiveEngine`                                                                     | Single-system live or paper execution loop                           |
+| `LiveOrchestrator`                                                               | Multi-system live execution with shared broker and aggregated status |
+| `PaperEngine`                                                                    | In-process broker simulator implementing the broker adapter contract |
+| `AlpacaBroker` / `BinanceBroker` / `CoinbaseBroker` / `InteractiveBrokersBroker` | Real broker adapters                                                 |
+| `BrokerFeed` / `PollingFeed`                                                     | Feed adapters for streaming or polling operation                     |
+| `RiskManager`                                                                    | Session windows, daily loss gates, drawdown halts, position checks   |
+| `StateManager` / `JsonFileStorage`                                               | Persisted state, trades, and equity curve                            |
+| `EventBus` / `LiveLogger`                                                        | Event fanout and structured logging                                  |
+
+## `LiveEngine` quick start
+
+```js
+import { LiveEngine, PaperEngine, JsonFileStorage } from "tradelab/live";
+
+const engine = new LiveEngine({
+  id: "aapl-1m",
+  symbol: "AAPL",
+  interval: "1m",
+  broker: new PaperEngine({ equity: 25_000 }),
+  storage: new JsonFileStorage({ baseDir: "./output/live-state" }),
+  riskPct: 1,
+  mode: "streaming",
+  signal({ bar, openPosition }) {
+    if (openPosition) return null;
+    return {
+      side: "long",
+      stop: bar.close - 1,
+      rr: 2,
+    };
+  },
+});
+
+await engine.start();
+// ... run until shutdown condition
+await engine.stop();
+```
+
+Important behavior:
+
+- `signal()` is called with the same context shape as backtesting
+- market and limit/stop order lifecycles are tracked through broker events
+- state is persisted after fills, order updates, and equity updates
+- `getStatus()` returns runtime and risk state for health checks
+
+## `LiveOrchestrator` quick start
+
+```js
+import { LiveOrchestrator, PaperEngine, JsonFileStorage } from "tradelab/live";
+
+const orchestrator = new LiveOrchestrator({
+  broker: new PaperEngine({ equity: 100_000 }),
+  storage: new JsonFileStorage({ baseDir: "./output/live-state" }),
+  allocation: "weight",
+  systems: [
+    { id: "spy", symbol: "SPY", interval: "1m", weight: 2, signal: signalA },
+    { id: "qqq", symbol: "QQQ", interval: "1m", weight: 1, signal: signalB },
+  ],
+});
+
+await orchestrator.start();
+const status = orchestrator.getStatus();
+await orchestrator.stop();
+```
+
+Use orchestrator when multiple systems should share one broker/account context.
+
+## CLI live commands
+
+| Command           | Purpose                                      |
+| ----------------- | -------------------------------------------- |
+| `tradelab live`   | Run live engine or orchestrator (`--config`) |
+| `tradelab paper`  | Shortcut for `live` with paper broker mode   |
+| `tradelab status` | Inspect persisted live state                 |
+
+### Single-system paper run
+
+```bash
+tradelab paper \
+  --id aapl-1m \
+  --symbol AAPL \
+  --interval 1m \
+  --mode polling \
+  --once true \
+  --stateDir ./output/live-state
+```
+
+### Orchestrator run from config
+
+```bash
+tradelab live \
+  --config ./live-portfolio.json \
+  --paper \
+  --mode polling \
+  --once true \
+  --stateDir ./output/live-state
+```
+
+Example config:
+
+```json
+{
+  "allocation": "weight",
+  "equity": 50000,
+  "systems": [
+    {
+      "id": "spy-system",
+      "symbol": "SPY",
+      "interval": "1m",
+      "strategy": "./strategies/spySignal.js",
+      "weight": 2
+    },
+    {
+      "id": "qqq-system",
+      "symbol": "QQQ",
+      "interval": "1m",
+      "strategy": "./strategies/qqqSignal.js",
+      "weight": 1
+    }
+  ]
+}
+```
+
+### State inspection
+
+```bash
+tradelab status --dir ./output/live-state
+tradelab status --dir ./output/live-state --namespace spy-system
+```
+
+## State and recovery
+
+Live state is namespaced and persisted as:
+
+- `state.json` (latest engine state)
+- `trades.jsonl` (append-only)
+- `equity.jsonl` (append-only)
+
+On restart, the engine loads persisted state and reconciles with broker positions.
+
+## Broker notes
+
+- Alpaca and Binance adapters support native paper modes.
+- Coinbase adapter is live API only; use `PaperEngine` for simulated Coinbase workflows.
+- Interactive Brokers adapter requires `@stoqey/ib` to be installed.
+
+For runtime compatibility and options, see [types/live.d.ts](../types/live.d.ts).
+
+## Eventing and logs
+
+`EventBus` emits lifecycle and execution events such as:
+
+- `connected`, `shutdown`
+- `signal`
+- `order:submitted`, `order:filled`, `order:rejected`, `order:canceled`
+- `position:opened`, `position:closed`
+- `equity:update`
+- `risk:warning`, `risk:halt`
+
+Attach `LiveLogger` for structured JSON logs.
+
+<small>[Back to main page](README.md)</small>

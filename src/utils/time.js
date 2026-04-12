@@ -8,20 +8,14 @@ function usDstBoundsUTC(year) {
     marchCursor = new Date(marchCursor.getTime() + 24 * 60 * 60 * 1000);
   }
 
-  const dstStart = new Date(
-    Date.UTC(year, 2, marchCursor.getUTCDate(), 7, 0, 0)
-  );
+  const dstStart = new Date(Date.UTC(year, 2, marchCursor.getUTCDate(), 7, 0, 0));
 
   let novemberCursor = new Date(Date.UTC(year, 10, 1, 6, 0, 0));
   while (novemberCursor.getUTCDay() !== 0) {
-    novemberCursor = new Date(
-      novemberCursor.getTime() + 24 * 60 * 60 * 1000
-    );
+    novemberCursor = new Date(novemberCursor.getTime() + 24 * 60 * 60 * 1000);
   }
 
-  const dstEnd = new Date(
-    Date.UTC(year, 10, novemberCursor.getUTCDate(), 6, 0, 0)
-  );
+  const dstEnd = new Date(Date.UTC(year, 10, novemberCursor.getUTCDate(), 6, 0, 0));
 
   return { dstStart, dstEnd };
 }
@@ -58,9 +52,7 @@ export function isSession(timeMs, session = "NYSE") {
   if (session === "FUT") {
     const maintenanceStart = 17 * 60;
     const maintenanceEnd = 18 * 60;
-    return !(
-      minutes >= maintenanceStart && minutes < maintenanceEnd
-    );
+    return !(minutes >= maintenanceStart && minutes < maintenanceEnd);
   }
 
   const open = 9 * 60 + 30;

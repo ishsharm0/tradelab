@@ -20,19 +20,19 @@ function stitchEquitySeries(target, source) {
 }
 
 function canonicalParams(params) {
-  const entries = Object.entries(params || {}).sort(([left], [right]) =>
-    left.localeCompare(right)
-  );
+  const entries = Object.entries(params || {}).sort(([left], [right]) => left.localeCompare(right));
   return JSON.stringify(Object.fromEntries(entries));
+}
+
+function describeValue(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
 }
 
 function buildWindowRanges(length, trainBars, testBars, stepBars, mode) {
   const ranges = [];
-  for (
-    let start = 0;
-    start + trainBars + testBars <= length;
-    start += stepBars
-  ) {
+  for (let start = 0; start + trainBars + testBars <= length; start += stepBars) {
     const trainStart = mode === "anchored" ? 0 : start;
     const trainEnd = mode === "anchored" ? trainBars + start : start + trainBars;
     const testStart = trainEnd;
@@ -62,8 +62,8 @@ function summarizeBestParams(windows) {
 
     if (
       index > 0 &&
-      (windows[index - 1].bestParamsSignature ??
-        canonicalParams(windows[index - 1].bestParams)) === signature
+      (windows[index - 1].bestParamsSignature ?? canonicalParams(windows[index - 1].bestParams)) ===
+        signature
     ) {
       adjacentRepeats += 1;
     }
@@ -104,13 +104,19 @@ export function walkForwardOptimize({
   backtestOptions = {},
 } = {}) {
   if (!Array.isArray(candles) || candles.length === 0) {
-    throw new Error("walkForwardOptimize() requires a non-empty candles array");
+    throw new Error(
+      `walkForwardOptimize() requires a non-empty candles array, got ${describeValue(candles)}`
+    );
   }
   if (typeof signalFactory !== "function") {
-    throw new Error("walkForwardOptimize() requires a signalFactory function");
+    throw new Error(
+      `walkForwardOptimize() requires a signalFactory function, got ${describeValue(signalFactory)}`
+    );
   }
   if (!Array.isArray(parameterSets) || parameterSets.length === 0) {
-    throw new Error("walkForwardOptimize() requires parameterSets");
+    throw new Error(
+      `walkForwardOptimize() requires parameterSets, got ${describeValue(parameterSets)}`
+    );
   }
   if (!(trainBars > 0) || !(testBars > 0) || !(stepBars > 0)) {
     throw new Error("walkForwardOptimize() requires positive trainBars, testBars, and stepBars");
@@ -125,6 +131,12 @@ export function walkForwardOptimize({
   const eqSeries = [];
   let rollingEquity = backtestOptions.equity ?? 10_000;
   const ranges = buildWindowRanges(candles.length, trainBars, testBars, stepBars, mode);
+  if (!ranges.length) {
+    const required = trainBars + testBars;
+    throw new Error(
+      `walkForwardOptimize() produced zero windows: need at least ${required} candles (trainBars=${trainBars} + testBars=${testBars}) but got ${candles.length}. Try reducing trainBars/testBars or adding more historical data.`
+    );
+  }
   const trainBacktestOptions = {
     ...backtestOptions,
     collectEqSeries: false,
@@ -135,6 +147,13 @@ export function walkForwardOptimize({
   for (const range of ranges) {
     const trainSlice = candles.slice(range.trainStart, range.trainEnd);
     const testSlice = candles.slice(range.testStart, range.testEnd);
+    if (!trainSlice.length || !testSlice.length) {
+      throw new Error(
+        `walkForwardOptimize() generated an empty window (train=${trainSlice.length}, test=${testSlice.length}, range=${JSON.stringify(
+          range
+        )})`
+      );
+    }
 
     let best = null;
     for (const params of parameterSets) {
@@ -213,10 +232,14 @@ export function walkForwardOptimize({
     windows,
     trades: allTrades,
     positions: allPositions,
+    openPositions: [],
     metrics,
     eqSeries,
     replay: { frames: [], events: [] },
-    bestParams: Object.assign(windows.map((window) => window.bestParams), bestParamsSummary),
+    bestParams: Object.assign(
+      windows.map((window) => window.bestParams),
+      bestParamsSummary
+    ),
     bestParamsSummary: bestParamsSummary.stability,
   };
 }

@@ -126,8 +126,7 @@ export function atr(bars, period = 14) {
       continue;
     }
 
-    previousAtr =
-      (previousAtr * (period - 1) + trueRanges[index]) / period;
+    previousAtr = (previousAtr * (period - 1) + trueRanges[index]) / period;
     output[index] = previousAtr;
   }
 

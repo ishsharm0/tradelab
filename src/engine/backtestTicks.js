@@ -1,15 +1,31 @@
 import { buildMetrics } from "../metrics/buildMetrics.js";
 import { calculatePositionSize } from "../utils/positionSizing.js";
-import {
-  applyFill,
-  dayKeyUTC,
-  ocoExitCheck,
-  roundStep,
-} from "./execution.js";
+import { applyFill, dayKeyUTC, ocoExitCheck, roundStep } from "./execution.js";
 
 function asNumber(value) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+}
+
+function describeValue(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+
+function formatIsoTime(time) {
+  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
+}
+
+function callSignalWithContext({ signal, context, index, bar, symbol }) {
+  try {
+    return signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
 }
 
 function normalizeSide(value) {
@@ -23,10 +39,7 @@ function normalizeTick(tick) {
   const bid = asNumber(tick?.bid);
   const ask = asNumber(tick?.ask);
   const last = asNumber(tick?.price ?? tick?.last ?? tick?.close);
-  const mid =
-    bid !== null && ask !== null
-      ? (bid + ask) / 2
-      : last ?? bid ?? ask;
+  const mid = bid !== null && ask !== null ? (bid + ask) / 2 : (last ?? bid ?? ask);
   if (!Number.isFinite(time) || !Number.isFinite(mid)) return null;
 
   const prices = [asNumber(tick?.low), asNumber(tick?.high), bid, ask, last, mid].filter(
@@ -53,8 +66,7 @@ function normalizeSignal(signal, bar, fallbackR) {
 
   const hasExplicitEntry =
     signal.entry !== undefined || signal.limit !== undefined || signal.price !== undefined;
-  const entry =
-    asNumber(signal.entry ?? signal.limit ?? signal.price) ?? asNumber(bar?.close);
+  const entry = asNumber(signal.entry ?? signal.limit ?? signal.price) ?? asNumber(bar?.close);
   const stop = asNumber(signal.stop ?? signal.stopLoss ?? signal.sl);
   if (entry === null || stop === null) return null;
 
@@ -66,8 +78,7 @@ function normalizeSignal(signal, bar, fallbackR) {
   const targetR = rrHint ?? fallbackR;
 
   if (takeProfit === null && Number.isFinite(targetR) && targetR > 0) {
-    takeProfit =
-      side === "long" ? entry + risk * targetR : entry - risk * targetR;
+    takeProfit = side === "long" ? entry + risk * targetR : entry - risk * targetR;
   }
   if (takeProfit === null) return null;
 
@@ -88,19 +99,50 @@ function equityPoint(time, equity) {
   return { time, timestamp: time, equity };
 }
 
+function xmur3(seed) {
+  let hash = 1779033703 ^ seed.length;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = Math.imul(hash ^ seed.charCodeAt(index), 3432918353);
+    hash = (hash << 13) | (hash >>> 19);
+  }
+  return () => {
+    hash = Math.imul(hash ^ (hash >>> 16), 2246822507);
+    hash = Math.imul(hash ^ (hash >>> 13), 3266489909);
+    return (hash ^= hash >>> 16) >>> 0;
+  };
+}
+
+function mulberry32(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let value = Math.imul(state ^ (state >>> 15), state | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seededUnitInterval(seedParts) {
+  const seed = seedParts.map((part) => String(part)).join("|");
+  const seedFn = xmur3(seed);
+  return mulberry32(seedFn())();
+}
+
 function deterministicFill(probability, seedParts) {
   if (probability >= 1) return true;
   if (probability <= 0) return false;
-  let hash = 2166136261;
-  const seed = seedParts.join("|");
-  for (let index = 0; index < seed.length; index += 1) {
-    hash ^= seed.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  const normalized = (hash >>> 0) / 0xffffffff;
+  const normalized = seededUnitInterval(seedParts);
   return normalized <= probability;
 }
 
+/**
+ * Run a tick-level backtest with event-driven fills.
+ *
+ * Tick data is normalized into `{ time, open, high, low, close }` shape, then
+ * the strategy `signal()` callback is evaluated sequentially. Returned payload
+ * matches the candle engine: `trades`, `positions`, `metrics`, `eqSeries`, and
+ * chart-friendly `replay` frames/events.
+ */
 export function backtestTicks({
   ticks = [],
   symbol = "UNKNOWN",
@@ -124,15 +166,19 @@ export function backtestTicks({
   oco = {},
 } = {}) {
   if (!Array.isArray(ticks) || ticks.length === 0) {
-    throw new Error("backtestTicks() requires a non-empty ticks array");
+    throw new Error(
+      `backtestTicks() requires a non-empty ticks array, got ${describeValue(ticks)}`
+    );
   }
   if (typeof signal !== "function") {
-    throw new Error("backtestTicks() requires a signal function");
+    throw new Error(`backtestTicks() requires a signal function, got ${describeValue(signal)}`);
   }
 
   const normalizedTicks = ticks.map(normalizeTick).filter(Boolean);
   if (!normalizedTicks.length) {
-    throw new Error("backtestTicks() could not normalize any ticks");
+    throw new Error(
+      `backtestTicks() could not normalize any ticks from ${ticks.length} input rows`
+    );
   }
 
   const ocoOptions = {
@@ -293,9 +339,7 @@ export function backtestTicks({
         pending = null;
       } else {
         const touched =
-          pending.side === "long"
-            ? tick.low <= pending.entry
-            : tick.high >= pending.entry;
+          pending.side === "long" ? tick.low <= pending.entry : tick.high >= pending.entry;
         if (
           touched &&
           deterministicFill(queueFillProbability, [
@@ -362,13 +406,19 @@ export function backtestTicks({
 
     if (!open && !pending && !dailyLossHit && !dailyTradeCapHit) {
       const nextSignal = normalizeSignal(
-        signal({
-          candles: history,
+        callSignalWithContext({
+          signal,
+          context: {
+            candles: history,
+            index,
+            bar: tick,
+            equity: markedEquity(tick),
+            openPosition: open,
+            pendingOrder: pending,
+          },
           index,
           bar: tick,
-          equity: markedEquity(tick),
-          openPosition: open,
-          pendingOrder: pending,
+          symbol,
         }),
         tick,
         finalTP_R
@@ -384,8 +434,8 @@ export function backtestTicks({
           riskFrac: Number.isFinite(nextSignal.riskFraction)
             ? nextSignal.riskFraction
             : Number.isFinite(nextSignal.riskPct)
-            ? nextSignal.riskPct / 100
-            : riskPct / 100,
+              ? nextSignal.riskPct / 100
+              : riskPct / 100,
           orderType: nextSignal.orderType,
           createdAtIndex: index,
         };
@@ -407,9 +457,10 @@ export function backtestTicks({
     equityStart: equity,
     equityFinal: currentEquity,
     candles: normalizedTicks,
-    estBarMs: normalizedTicks.length > 1
-      ? Math.max(1, normalizedTicks[1].time - normalizedTicks[0].time)
-      : 1,
+    estBarMs:
+      normalizedTicks.length > 1
+        ? Math.max(1, normalizedTicks[1].time - normalizedTicks[0].time)
+        : 1,
     eqSeries,
   });
 
@@ -419,6 +470,7 @@ export function backtestTicks({
     range,
     trades,
     positions,
+    openPositions: [],
     metrics,
     eqSeries,
     replay: {

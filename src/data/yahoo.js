@@ -1,7 +1,6 @@
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DAY_SEC = 24 * 60 * 60;
 const requestQueue = {
   lastRequestAt: 0,
   minDelayMs: 400,
@@ -111,8 +110,7 @@ async function rateLimitedFetch(url, options = {}) {
   return fetch(url, {
     ...options,
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
       ...options.headers,
     },
   });
@@ -152,12 +150,7 @@ async function fetchYahooChart(symbol, { period1, period2, interval, includePreP
 
   const candles = [];
   for (let index = 0; index < timestamps.length; index += 1) {
-    if (
-      open[index] == null ||
-      high[index] == null ||
-      low[index] == null ||
-      close[index] == null
-    ) {
+    if (open[index] == null || high[index] == null || low[index] == null || close[index] == null) {
       continue;
     }
 
@@ -179,7 +172,7 @@ function formatYahooFailureMessage(symbol, interval, period, error, attempts) {
   return [
     `Unable to reach Yahoo Finance for ${symbol} ${interval} ${period} after ${attempts} attempts.`,
     `Last error: ${detail}`,
-    "Try again later, or fall back to a local CSV/cache workflow with getHistoricalCandles({ source: \"csv\", ... }) or loadCandlesFromCache(...).",
+    'Try again later, or fall back to a local CSV/cache workflow with getHistoricalCandles({ source: "csv", ... }) or loadCandlesFromCache(...).',
   ].join(" ");
 }
 
@@ -203,13 +196,7 @@ async function fetchYahooChartWithRetry(symbol, params, period, maxRetries = 3) 
   }
 
   throw new Error(
-    formatYahooFailureMessage(
-      symbol,
-      params.interval,
-      period,
-      lastError,
-      maxRetries
-    )
+    formatYahooFailureMessage(symbol, params.interval, period, lastError, maxRetries)
   );
 }
 
@@ -253,10 +240,10 @@ export async function fetchHistorical(symbol, interval = "5m", period = "60d", o
       period
     );
     chunks.push(...candles);
-    chunkEndMs = chunkStartMs - 1000;
     remainingMs -= takeMs;
+    chunkEndMs = chunkStartMs - 1000;
 
-    if (chunks.length > 2_000_000) break;
+    if (chunkEndMs <= 0 || chunks.length > 2_000_000) break;
   }
 
   return sanitizeBars(chunks);

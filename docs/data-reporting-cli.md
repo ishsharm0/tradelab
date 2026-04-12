@@ -1,4 +1,5 @@
 # Data, reporting, and CLI
+
 <small>[Back to main page](README.md)</small>
 
 This page covers the parts of the package around the core engine:
@@ -6,7 +7,7 @@ This page covers the parts of the package around the core engine:
 - historical data loading
 - local cache helpers
 - export helpers
-- command-line usage
+- command-line usage for backtest and live workflows
 
 ## Overview
 
@@ -14,13 +15,13 @@ If you are not bringing your own candles yet, start here.
 
 ## Choose the right entry point
 
-| Use case | Function |
-| --- | --- |
+| Use case                                                  | Function                 |
+| --------------------------------------------------------- | ------------------------ |
 | Load data without caring about the source-specific helper | `getHistoricalCandles()` |
-| Fetch directly from Yahoo | `fetchHistorical()` |
-| Load a local CSV file | `loadCandlesFromCSV()` |
-| Reuse saved normalized data | `loadCandlesFromCache()` |
-| Try the package from a terminal first | `tradelab` CLI |
+| Fetch directly from Yahoo                                 | `fetchHistorical()`      |
+| Load a local CSV file                                     | `loadCandlesFromCSV()`   |
+| Reuse saved normalized data                               | `loadCandlesFromCache()` |
+| Try the package from a terminal first                     | `tradelab` CLI           |
 
 ## Historical data
 
@@ -50,15 +51,15 @@ If you are writing application code, prefer `getHistoricalCandles()` over callin
 
 ### Yahoo options
 
-| Option | Purpose |
-| --- | --- |
-| `symbol` | Ticker or Yahoo symbol |
-| `interval` | Candle interval such as `1d` or `5m` |
-| `period` | Lookback period such as `6mo` or `1y` |
+| Option           | Purpose                                               |
+| ---------------- | ----------------------------------------------------- |
+| `symbol`         | Ticker or Yahoo symbol                                |
+| `interval`       | Candle interval such as `1d` or `5m`                  |
+| `period`         | Lookback period such as `6mo` or `1y`                 |
 | `includePrePost` | Includes premarket and postmarket data when supported |
-| `cache` | Reuses saved normalized data |
-| `refresh` | Forces a fresh download even if cache exists |
-| `cacheDir` | Overrides the default cache directory |
+| `cache`          | Reuses saved normalized data                          |
+| `refresh`        | Forces a fresh download even if cache exists          |
+| `cacheDir`       | Overrides the default cache directory                 |
 
 The Yahoo layer retries transient failures with exponential backoff. If the endpoint still fails, the error message points users toward CSV or cached data.
 
@@ -149,12 +150,9 @@ The main bundle export. By default it writes:
 
 Return value:
 
+<!-- prettier-ignore -->
 ```js
-{
-  csv,
-  html,
-  metrics
-}
+{ csv, html, metrics }
 ```
 
 If you only need one output type, call the narrower helper directly.
@@ -184,13 +182,16 @@ The CLI is best for quick iteration, smoke tests, and trying the package before 
 
 ## Commands
 
-| Command | Purpose |
-| --- | --- |
-| `tradelab backtest` | Run a single backtest from Yahoo or CSV |
-| `tradelab portfolio` | Run a simple multi-file portfolio backtest |
+| Command                 | Purpose                                                                   |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `tradelab backtest`     | Run a single backtest from Yahoo or CSV                                   |
+| `tradelab portfolio`    | Run a simple multi-file portfolio backtest                                |
 | `tradelab walk-forward` | Run rolling or anchored validation with built-in or local strategy search |
-| `tradelab prefetch` | Download and cache Yahoo data |
-| `tradelab import-csv` | Normalize and cache a CSV file |
+| `tradelab live`         | Run live engine or orchestrator mode                                      |
+| `tradelab paper`        | Run live engine in paper broker mode                                      |
+| `tradelab status`       | Inspect persisted live namespace state                                    |
+| `tradelab prefetch`     | Download and cache Yahoo data                                             |
+| `tradelab import-csv`   | Normalize and cache a CSV file                                            |
 
 ### Backtest
 
@@ -238,6 +239,31 @@ tradelab walk-forward \
 
 The CLI walk-forward command defaults to the built-in `ema-cross` search, but `--strategy ./path/to/module.mjs` can now load a local module that exports `signalFactory(params, args)` and either `parameterSets` or `createParameterSets(args)`. Inline JSON grids are also accepted through `--parameterSets`.
 
+### Live and paper
+
+```bash
+tradelab paper --symbol AAPL --interval 1m --mode polling --once true
+
+tradelab live \
+  --strategy ./mySignal.js \
+  --symbol AAPL \
+  --interval 1m \
+  --broker alpaca \
+  --apiKey $APCA_KEY \
+  --apiSecret $APCA_SECRET
+
+tradelab live --config ./live-portfolio.json --paper --mode polling --once true
+```
+
+For full runtime details, see [live-trading.md](live-trading.md).
+
+### Status
+
+```bash
+tradelab status --dir ./output/live-state
+tradelab status --dir ./output/live-state --namespace my-system
+```
+
 ### Cache utilities
 
 ```bash
@@ -247,12 +273,12 @@ tradelab import-csv --csvPath ./data/spy.csv --symbol SPY --interval 1d
 
 ## Troubleshooting
 
-| Problem | Check first |
-| --- | --- |
-| Yahoo request errors | enable cache, retry later, or fall back to CSV |
-| Unexpected trade count | `warmupBars`, `flattenAtClose`, and signal frequency |
-| Empty result | candle order, signal logic, and stop/target validity |
-| Confusing CSV import | inspect normalized bars from `loadCandlesFromCSV()` before backtesting |
-| Export confusion | use metrics JSON first if you need programmatic output |
+| Problem                | Check first                                                            |
+| ---------------------- | ---------------------------------------------------------------------- |
+| Yahoo request errors   | enable cache, retry later, or fall back to CSV                         |
+| Unexpected trade count | `warmupBars`, `flattenAtClose`, and signal frequency                   |
+| Empty result           | candle order, signal logic, and stop/target validity                   |
+| Confusing CSV import   | inspect normalized bars from `loadCandlesFromCSV()` before backtesting |
+| Export confusion       | use metrics JSON first if you need programmatic output                 |
 
 <small>[Back to main page](README.md)</small>

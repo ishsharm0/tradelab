@@ -1,4 +1,5 @@
 # Strategy examples
+
 <small>[Back to main page](README.md)</small>
 
 These are research templates. They show how to wire different kinds of data and execution assumptions into the engine without changing the output pipeline.
@@ -117,14 +118,13 @@ const candles = await getHistoricalCandles({
 
 const sentimentByDay = new Map([
   ["2025-01-02", 0.75],
-  ["2025-01-03", -0.10],
+  ["2025-01-03", -0.1],
   // ...
 ]);
 
 const enriched = candles.map((bar) => ({
   ...bar,
-  sentiment:
-    sentimentByDay.get(new Date(bar.time).toISOString().slice(0, 10)) ?? 0,
+  sentiment: sentimentByDay.get(new Date(bar.time).toISOString().slice(0, 10)) ?? 0,
 }));
 
 const result = backtest({
@@ -137,11 +137,7 @@ const result = backtest({
     const slow = ema(closes, 30);
     const last = closes.length - 1;
 
-    if (
-      fast[last - 1] <= slow[last - 1] &&
-      fast[last] > slow[last] &&
-      bar.sentiment > 0.5
-    ) {
+    if (fast[last - 1] <= slow[last - 1] && fast[last] > slow[last] && bar.sentiment > 0.5) {
       return {
         side: "long",
         entry: bar.close,
@@ -180,9 +176,7 @@ const labeled = await Promise.all(
     regime:
       index < 20
         ? "neutral"
-        : await classifyRegime(
-            candles.slice(index - 20, index).map((c) => c.close)
-          ),
+        : await classifyRegime(candles.slice(index - 20, index).map((c) => c.close)),
   }))
 );
 

@@ -9,10 +9,7 @@ function tradeRMultiple(trade) {
   const initialRisk = trade._initRisk || 0;
   if (initialRisk <= 0) return 0;
   const entry = trade.entryFill ?? trade.entry;
-  const perUnit =
-    trade.side === "long"
-      ? trade.exit.price - entry
-      : entry - trade.exit.price;
+  const perUnit = trade.side === "long" ? trade.exit.price - entry : entry - trade.exit.price;
   return perUnit / initialRisk;
 }
 
@@ -58,9 +55,7 @@ export function exportTradesCsv(
         (trade.maeR ?? 0).toFixed(3),
         trade.adds ?? 0,
         trade.entryATR !== undefined ? Number(trade.entryATR).toFixed(6) : "",
-        trade.exit.exitATR !== undefined
-          ? Number(trade.exit.exitATR).toFixed(6)
-          : "",
+        trade.exit.exitATR !== undefined ? Number(trade.exit.exitATR).toFixed(6) : "",
       ].join(",")
     ),
   ].join("\n");

@@ -2,7 +2,6 @@
 
 <small>[Back to main page](README.md)</small>
 
-
 This page covers the simulation layer:
 
 - `backtest(options)`
@@ -15,15 +14,17 @@ This page covers the simulation layer:
 
 Use the engine layer when you already have candles and want to simulate strategy behavior, inspect the result, and export or post-process it.
 
+The same `signal()` contract is used by `LiveEngine` in `tradelab/live`, so strategy logic can move from research to execution without rewriting signal inputs.
+
 ## Choose the right function
 
-| Use case | Function |
-| --- | --- |
-| One strategy on one candle series | `backtest()` |
-| One strategy on tick or quote data | `backtestTicks()` |
-| Multiple symbols with one combined result | `backtestPortfolio()` |
+| Use case                                  | Function                |
+| ----------------------------------------- | ----------------------- |
+| One strategy on one candle series         | `backtest()`            |
+| One strategy on tick or quote data        | `backtestTicks()`       |
+| Multiple symbols with one combined result | `backtestPortfolio()`   |
 | Rolling or anchored train/test validation | `walkForwardOptimize()` |
-| Recompute metrics from realized trades | `buildMetrics()` |
+| Recompute metrics from realized trades    | `buildMetrics()`        |
 
 ## Candle input
 
@@ -76,16 +77,16 @@ const result = backtest({
 
 ### Core options
 
-| Option | Purpose |
-| --- | --- |
-| `symbol`, `interval`, `range` | Labels carried into results and exports |
-| `equity` | Starting equity, default `10000` |
-| `riskPct` or `riskFraction` | Default risk per trade when `qty` is not provided |
-| `warmupBars` | Bars skipped before signal evaluation starts |
-| `flattenAtClose` | Forces end-of-day exit when enabled |
-| `collectEqSeries`, `collectReplay` | Builds extra output for charts and exports |
-| `strict` | Throws on direct lookahead access such as `candles[index + 1]` |
-| `costs` | Slippage, spread, and commission model |
+| Option                             | Purpose                                                        |
+| ---------------------------------- | -------------------------------------------------------------- |
+| `symbol`, `interval`, `range`      | Labels carried into results and exports                        |
+| `equity`                           | Starting equity, default `10000`                               |
+| `riskPct` or `riskFraction`        | Default risk per trade when `qty` is not provided              |
+| `warmupBars`                       | Bars skipped before signal evaluation starts                   |
+| `flattenAtClose`                   | Forces end-of-day exit when enabled                            |
+| `collectEqSeries`, `collectReplay` | Builds extra output for charts and exports                     |
+| `strict`                           | Throws on direct lookahead access such as `candles[index + 1]` |
+| `costs`                            | Slippage, spread, and commission model                         |
 
 If you are starting from scratch, the most useful options to set explicitly are:
 
@@ -97,38 +98,31 @@ If you are starting from scratch, the most useful options to set explicitly are:
 
 ### Signal contract
 
-The signal function receives:
+The signal function receives a context object with these fields:
 
+<!-- prettier-ignore -->
 ```js
-{
-  candles,
-  index,
-  bar,
-  equity,
-  openPosition,
-  pendingOrder
-}
+{ candles, index, bar, equity, openPosition, pendingOrder }
 ```
 
 Return `null` for no trade, or a signal object:
 
 ```js
-{
-  side: "long" | "short",
-  entry: 101.25,
-  stop: 99.75,
-  takeProfit: 104.25
-}
+// minimal
+{ side: "long", stop: 99.75, rr: 2 }
+
+// explicit targets
+{ side: "long", entry: 101.25, stop: 99.75, takeProfit: 104.25 }
 ```
 
 ### Signal conveniences
 
-| Field | Behavior |
-| --- | --- |
-| `side` | Accepts `long`, `short`, `buy`, or `sell` |
-| `entry` | Defaults to the current close if omitted |
-| `takeProfit` | Can be derived from `rr` or `_rr` |
-| `qty` or `size` | Overrides risk-based sizing |
+| Field                       | Behavior                                         |
+| --------------------------- | ------------------------------------------------ |
+| `side`                      | Accepts `long`, `short`, `buy`, or `sell`        |
+| `entry`                     | Defaults to the current close if omitted         |
+| `takeProfit`                | Can be derived from `rr` or `_rr`                |
+| `qty` or `size`             | Overrides risk-based sizing                      |
 | `riskPct` or `riskFraction` | Overrides the global risk setting for that trade |
 
 Practical rule: return the smallest signal object that expresses the trade clearly. In many strategies that is just `side`, `stop`, and `rr`.
@@ -207,19 +201,11 @@ Recommended order of adoption:
 
 ## Result shape
 
-`backtest()` returns:
+`backtest()` returns an object with these fields:
 
+<!-- prettier-ignore -->
 ```js
-{
-  symbol,
-  interval,
-  range,
-  trades,
-  positions,
-  metrics,
-  eqSeries,
-  replay
-}
+{ symbol, interval, range, trades, positions, openPositions, metrics, eqSeries, replay }
 ```
 
 ### `trades`
@@ -267,9 +253,7 @@ Useful first checks after any run:
 Realized equity points:
 
 ```js
-[
-  { time, timestamp, equity }
-]
+[{ time, timestamp, equity }];
 ```
 
 `time` and `timestamp` contain the same Unix-millisecond value.

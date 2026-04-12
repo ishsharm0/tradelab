@@ -34,7 +34,7 @@ function strictHistoryView(candles, currentIndex) {
     get(target, property, receiver) {
       if (isArrayIndexKey(property) && Number(property) >= target.length) {
         throw new Error(
-          `strict mode: signal() tried to access candles[${property}] beyond current index ${currentIndex}`
+          `strict mode: signal() tried to access candles[${String(property)}] beyond current index ${currentIndex}`
         );
       }
       return Reflect.get(target, property, receiver);
@@ -42,20 +42,61 @@ function strictHistoryView(candles, currentIndex) {
   });
 }
 
-function normalizeSide(value) {
+function describeValue(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+
+function formatIsoTime(time) {
+  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
+}
+
+export function callSignalWithContext({ signal, context, index, bar, symbol }) {
+  try {
+    return signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
+}
+
+export function snapshotOpenPosition(open, markPrice) {
+  if (!open) return null;
+  const entryPrice = open.entryFill ?? open.entry;
+  const direction = open.side === "long" ? 1 : -1;
+  const unrealizedPnl = (markPrice - entryPrice) * direction * open.size;
+  return {
+    id: open.id,
+    symbol: open.symbol,
+    side: open.side,
+    size: open.size,
+    entry: open.entry,
+    entryFill: open.entryFill,
+    stop: open.stop,
+    takeProfit: open.takeProfit,
+    openTime: open.openTime,
+    markPrice,
+    unrealizedPnl,
+    _initRisk: open._initRisk,
+  };
+}
+
+export function normalizeSide(value) {
   if (value === "long" || value === "buy") return "long";
   if (value === "short" || value === "sell") return "short";
   return null;
 }
 
-function normalizeSignal(signal, bar, fallbackR) {
+export function normalizeSignal(signal, bar, fallbackR) {
   if (!signal) return null;
 
   const side = normalizeSide(signal.side ?? signal.direction ?? signal.action);
   if (!side) return null;
 
-  const entry =
-    asNumber(signal.entry ?? signal.limit ?? signal.price) ?? asNumber(bar?.close);
+  const entry = asNumber(signal.entry ?? signal.limit ?? signal.price) ?? asNumber(bar?.close);
   const stop = asNumber(signal.stop ?? signal.stopLoss ?? signal.sl);
   if (entry === null || stop === null) return null;
 
@@ -67,8 +108,7 @@ function normalizeSignal(signal, bar, fallbackR) {
   const targetR = rrHint ?? fallbackR;
 
   if (takeProfit === null && Number.isFinite(targetR) && targetR > 0) {
-    takeProfit =
-      side === "long" ? entry + risk * targetR : entry - risk * targetR;
+    takeProfit = side === "long" ? entry + risk * targetR : entry - risk * targetR;
   }
   if (takeProfit === null) return null;
 
@@ -86,7 +126,7 @@ function normalizeSignal(signal, bar, fallbackR) {
   };
 }
 
-function mergeOptions(options) {
+export function mergeOptions(options) {
   const normalizedRiskPct = Number.isFinite(options.riskFraction)
     ? options.riskFraction * 100
     : options.riskPct;
@@ -160,7 +200,7 @@ function mergeOptions(options) {
   };
 }
 
-function capitalForSize(entryPrice, size, maxLeverage) {
+export function capitalForSize(entryPrice, size, maxLeverage) {
   const leverage = Math.max(1, Number(maxLeverage) || 1);
   return (Math.abs(entryPrice) * Math.max(0, size)) / leverage;
 }
@@ -171,10 +211,18 @@ export class BarSystemRunner {
     const { candles, signal } = this.options;
 
     if (!Array.isArray(candles) || candles.length === 0) {
-      throw new Error("backtestPortfolio() requires each system to include non-empty candles");
+      throw new Error(
+        `backtestPortfolio() requires each system to include non-empty candles, got ${describeValue(
+          candles
+        )} for ${this.options.symbol}`
+      );
     }
     if (typeof signal !== "function") {
-      throw new Error("backtestPortfolio() requires each system to include a signal function");
+      throw new Error(
+        `backtestPortfolio() requires each system to include a signal function, got ${describeValue(
+          signal
+        )} for ${this.options.symbol}`
+      );
     }
 
     this.symbol = this.options.symbol;
@@ -197,9 +245,7 @@ export class BarSystemRunner {
     this.atrValues = needAtr ? atr(candles, atrSourcePeriod) : null;
     this.wantEqSeries = Boolean(this.options.collectEqSeries);
     this.wantReplay = Boolean(this.options.collectReplay);
-    this.eqSeries = this.wantEqSeries
-      ? [equityPoint(candles[0].time, this.currentEquity)]
-      : [];
+    this.eqSeries = this.wantEqSeries ? [equityPoint(candles[0].time, this.currentEquity)] : [];
     this.replayFrames = this.wantReplay ? [] : [];
     this.replayEvents = this.wantReplay ? [] : [];
     this.startIndex = Math.min(Math.max(1, this.options.warmupBars), candles.length);
@@ -218,7 +264,11 @@ export class BarSystemRunner {
 
   getLockedCapital() {
     if (!this.open) return 0;
-    return capitalForSize(this.open.entryFill ?? this.open.entry, this.open.size, this.options.maxLeverage);
+    return capitalForSize(
+      this.open.entryFill ?? this.open.entry,
+      this.open.size,
+      this.options.maxLeverage
+    );
   }
 
   getMarkPrice() {
@@ -229,9 +279,7 @@ export class BarSystemRunner {
     if (!this.open || !this.lastBar) return this.currentEquity;
     const direction = this.open.side === "long" ? 1 : -1;
     const markPnl =
-      (this.lastBar.close - (this.open.entryFill ?? this.open.entry)) *
-      direction *
-      this.open.size;
+      (this.lastBar.close - (this.open.entryFill ?? this.open.entry)) * direction * this.open.size;
     return this.currentEquity + markPnl;
   }
 
@@ -256,8 +304,7 @@ export class BarSystemRunner {
     const direction = openPos.side === "long" ? 1 : -1;
     const entryFill = openPos.entryFill;
     const grossPnl = (exitPx - entryFill) * direction * qty;
-    const entryFeePortion =
-      (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
+    const entryFeePortion = (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
     const pnl = grossPnl - entryFeePortion - exitFeeTotal;
 
     this.currentEquity += pnl;
@@ -272,14 +319,14 @@ export class BarSystemRunner {
       reason === "SCALE"
         ? "scale-out"
         : reason === "TP"
-        ? "tp"
-        : reason === "SL"
-        ? "sl"
-        : reason === "EOD"
-        ? "eod"
-        : remaining <= 0
-        ? "exit"
-        : "scale-out";
+          ? "tp"
+          : reason === "SL"
+            ? "sl"
+            : reason === "EOD"
+              ? "eod"
+              : remaining <= 0
+                ? "exit"
+                : "scale-out";
 
     if (this.wantReplay) {
       this.replayEvents.push({
@@ -324,9 +371,7 @@ export class BarSystemRunner {
     const direction = openPos.side === "long" ? 1 : -1;
     const breakevenDelta = Math.abs(realized / openPos.size);
     const breakevenPrice =
-      direction === 1
-        ? openPos.entryFill - breakevenDelta
-        : openPos.entryFill + breakevenDelta;
+      direction === 1 ? openPos.entryFill - breakevenDelta : openPos.entryFill + breakevenDelta;
 
     const tightened =
       direction === 1
@@ -381,10 +426,7 @@ export class BarSystemRunner {
     let stopPrice = this.pending.stop;
     if (this.options.reanchorStopOnFill) {
       const direction = this.pending.side === "long" ? 1 : -1;
-      stopPrice =
-        direction === 1
-          ? entryPrice - plannedRisk
-          : entryPrice + plannedRisk;
+      stopPrice = direction === 1 ? entryPrice - plannedRisk : entryPrice + plannedRisk;
     }
 
     let takeProfit = this.pending.tp;
@@ -420,30 +462,27 @@ export class BarSystemRunner {
         maxLeverage: this.options.maxLeverage,
       });
 
-    const approvedSize = typeof resolveEntrySize === "function"
-      ? resolveEntrySize({
-          runner: this,
-          desiredSize,
-          entryPrice,
-          stopPrice,
-          pending: this.pending,
-          fillKind,
-        })
-      : desiredSize;
+    const approvedSize =
+      typeof resolveEntrySize === "function"
+        ? resolveEntrySize({
+            runner: this,
+            desiredSize,
+            entryPrice,
+            stopPrice,
+            pending: this.pending,
+            fillKind,
+          })
+        : desiredSize;
     const size = roundStep(approvedSize, this.options.qtyStep);
     if (size < this.options.minQty) return false;
 
-    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(
-      entryPrice,
-      this.pending.side,
-      {
-        slippageBps: this.options.slippageBps,
-        feeBps: this.options.feeBps,
-        kind: fillKind,
-        qty: size,
-        costs: this.options.costs,
-      }
-    );
+    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(entryPrice, this.pending.side, {
+      slippageBps: this.options.slippageBps,
+      feeBps: this.options.feeBps,
+      kind: fillKind,
+      qty: size,
+      costs: this.options.costs,
+    });
 
     this.open = {
       symbol: this.symbol,
@@ -514,9 +553,7 @@ export class BarSystemRunner {
 
     const trigger = this.options.triggerMode || this.options.oco.mode || "intrabar";
     const dayKey =
-      this.options.flattenAtClose || trigger === "close"
-        ? dayKeyET(bar.time)
-        : dayKeyUTC(bar.time);
+      this.options.flattenAtClose || trigger === "close" ? dayKeyET(bar.time) : dayKeyUTC(bar.time);
     if (this.currentDay === null || dayKey !== this.currentDay) {
       this.currentDay = dayKey;
       this.dayPnl = 0;
@@ -567,11 +604,7 @@ export class BarSystemRunner {
       this.open._mfeR = Math.max(this.open._mfeR ?? -Infinity, highR);
       this.open._maeR = Math.min(this.open._maeR ?? Infinity, lowR);
 
-      if (
-        this.open._breakevenAtR > 0 &&
-        highR >= this.open._breakevenAtR &&
-        !this.open._beArmed
-      ) {
+      if (this.open._breakevenAtR > 0 && highR >= this.open._breakevenAtR && !this.open._beArmed) {
         const tightened =
           this.open.side === "long"
             ? Math.max(this.open.stop, this.open.entry)
@@ -583,8 +616,7 @@ export class BarSystemRunner {
       }
 
       if (this.open._trailAfterR > 0 && highR >= this.open._trailAfterR) {
-        const candidate =
-          this.open.side === "long" ? bar.close - risk : bar.close + risk;
+        const candidate = this.open.side === "long" ? bar.close - risk : bar.close + risk;
         const tightened =
           this.open.side === "long"
             ? Math.max(this.open.stop, candidate)
@@ -595,10 +627,7 @@ export class BarSystemRunner {
       }
 
       if (this.options.mfeTrail.enabled && this.open._mfeR >= this.options.mfeTrail.armR) {
-        const targetR = Math.max(
-          0,
-          this.open._mfeR - Math.max(0, this.options.mfeTrail.givebackR)
-        );
+        const targetR = Math.max(0, this.open._mfeR - Math.max(0, this.options.mfeTrail.givebackR));
         const candidate =
           this.open.side === "long"
             ? this.open.entry + targetR * risk
@@ -612,12 +641,14 @@ export class BarSystemRunner {
           : tightened;
       }
 
-      if (this.options.atrTrailMult > 0 && this.atrValues && this.atrValues[this.index] !== undefined) {
+      if (
+        this.options.atrTrailMult > 0 &&
+        this.atrValues &&
+        this.atrValues[this.index] !== undefined
+      ) {
         const trailDistance = this.atrValues[this.index] * this.options.atrTrailMult;
         const candidate =
-          this.open.side === "long"
-            ? bar.close - trailDistance
-            : bar.close + trailDistance;
+          this.open.side === "long" ? bar.close - trailDistance : bar.close + trailDistance;
         const tightened =
           this.open.side === "long"
             ? Math.max(this.open.stop, candidate)
@@ -641,7 +672,10 @@ export class BarSystemRunner {
           !this.open._volCutDone;
 
         if (shouldCut) {
-          const cutQty = roundStep(this.open.size * this.options.volScale.cutFrac, this.options.qtyStep);
+          const cutQty = roundStep(
+            this.open.size * this.options.volScale.cutFrac,
+            this.options.qtyStep
+          );
           if (cutQty >= this.options.minQty && cutQty < this.open.size) {
             const exitSide = this.open.side === "long" ? "short" : "long";
             const { price: filled, feeTotal: exitFeeTotal } = applyFill(bar.close, exitSide, {
@@ -666,7 +700,10 @@ export class BarSystemRunner {
       }
 
       let addedThisBar = false;
-      if (this.options.pyramiding.enabled && (this.open._adds ?? 0) < this.options.pyramiding.maxAdds) {
+      if (
+        this.options.pyramiding.enabled &&
+        (this.open._adds ?? 0) < this.options.pyramiding.maxAdds
+      ) {
         const addNumber = (this.open._adds || 0) + 1;
         const triggerR = this.options.pyramiding.addAtR * addNumber;
         const triggerPrice =
@@ -683,37 +720,45 @@ export class BarSystemRunner {
               ? bar.high >= triggerPrice
               : bar.close >= triggerPrice
             : trigger === "intrabar"
-            ? bar.low <= triggerPrice
-            : bar.close <= triggerPrice;
+              ? bar.low <= triggerPrice
+              : bar.close <= triggerPrice;
 
         if (breakEvenSatisfied && touched) {
           const baseSize = this.open.baseSize || this.open.initSize;
-          const requestedQty = roundStep(baseSize * this.options.pyramiding.addFrac, this.options.qtyStep);
-          const addQty = typeof resolveEntrySize === "function"
-            ? roundStep(
-                resolveEntrySize({
-                  runner: this,
-                  desiredSize: requestedQty,
-                  entryPrice: triggerPrice,
-                  stopPrice: this.open.stop,
-                  pending: {
-                    side: this.open.side,
-                    meta: this.open,
-                    riskFrac: this.options.riskPct / 100,
-                  },
-                  fillKind: "limit",
-                }),
-                this.options.qtyStep
-              )
-            : requestedQty;
+          const requestedQty = roundStep(
+            baseSize * this.options.pyramiding.addFrac,
+            this.options.qtyStep
+          );
+          const addQty =
+            typeof resolveEntrySize === "function"
+              ? roundStep(
+                  resolveEntrySize({
+                    runner: this,
+                    desiredSize: requestedQty,
+                    entryPrice: triggerPrice,
+                    stopPrice: this.open.stop,
+                    pending: {
+                      side: this.open.side,
+                      meta: this.open,
+                      riskFrac: this.options.riskPct / 100,
+                    },
+                    fillKind: "limit",
+                  }),
+                  this.options.qtyStep
+                )
+              : requestedQty;
           if (addQty >= this.options.minQty) {
-            const { price: addFill, feeTotal: addFeeTotal } = applyFill(triggerPrice, this.open.side, {
-              slippageBps: this.options.slippageBps,
-              feeBps: this.options.feeBps,
-              kind: "limit",
-              qty: addQty,
-              costs: this.options.costs,
-            });
+            const { price: addFill, feeTotal: addFeeTotal } = applyFill(
+              triggerPrice,
+              this.open.side,
+              {
+                slippageBps: this.options.slippageBps,
+                feeBps: this.options.feeBps,
+                kind: "limit",
+                qty: addQty,
+                costs: this.options.costs,
+              }
+            );
             const newSize = this.open.size + addQty;
             this.open.entryFeeTotal += addFeeTotal;
             this.open.entryFill =
@@ -738,8 +783,8 @@ export class BarSystemRunner {
               ? bar.high >= triggerPrice
               : bar.close >= triggerPrice
             : trigger === "intrabar"
-            ? bar.low <= triggerPrice
-            : bar.close <= triggerPrice;
+              ? bar.low <= triggerPrice
+              : bar.close <= triggerPrice;
 
         if (touched) {
           const exitSide = this.open.side === "long" ? "short" : "long";
@@ -818,7 +863,7 @@ export class BarSystemRunner {
       } else if (this.index > this.pending.expiresAt || dailyLossHit || dailyTradeCapHit) {
         if (this.options.entryChase.enabled && this.options.entryChase.convertOnExpiry) {
           const riskAtEdge = Math.abs(
-            this.pending.meta._initRisk ?? (this.pending.entry - this.pending.stop)
+            this.pending.meta._initRisk ?? this.pending.entry - this.pending.stop
           );
           const priceNow = bar.close;
           const direction = this.pending.side === "long" ? 1 : -1;
@@ -830,28 +875,36 @@ export class BarSystemRunner {
 
           if (slippedR > this.options.maxSlipROnFill) {
             this.pending = null;
-          } else if (!this.openFromPending(bar, signalEquity, priceNow, "market", resolveEntrySize)) {
+          } else if (
+            !this.openFromPending(bar, signalEquity, priceNow, "market", resolveEntrySize)
+          ) {
             this.pending = null;
           }
         } else {
           this.pending = null;
         }
       } else if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
-        if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
+        if (
+          !this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)
+        ) {
           this.pending = null;
         }
       } else if (this.options.entryChase.enabled) {
         const elapsedBars = this.index - (this.pending.startedAtIndex ?? this.index);
-        const midpoint = this.pending.meta?._imb?.mid;
+        const midpoint = asNumber(this.pending.meta?._imb?.mid);
 
-        if (!this.pending._chasedCE && midpoint !== undefined && elapsedBars >= Math.max(1, this.options.entryChase.afterBars)) {
+        if (
+          !this.pending._chasedCE &&
+          midpoint !== null &&
+          elapsedBars >= Math.max(1, this.options.entryChase.afterBars)
+        ) {
           this.pending.entry = midpoint;
           this.pending._chasedCE = true;
         }
 
         if (this.pending._chasedCE) {
           const riskRef = Math.abs(
-            this.pending.meta?._initRisk ?? (this.pending.entry - this.pending.stop)
+            this.pending.meta?._initRisk ?? this.pending.entry - this.pending.stop
           );
           const priceNow = bar.close;
           const direction = this.pending.side === "long" ? 1 : -1;
@@ -887,15 +940,21 @@ export class BarSystemRunner {
     }
 
     if (!this.pending) {
-      const rawSignal = this.options.signal(this.buildSignalContext(this.index, bar, signalEquity));
+      const rawSignal = callSignalWithContext({
+        signal: this.options.signal,
+        context: this.buildSignalContext(this.index, bar, signalEquity),
+        index: this.index,
+        bar,
+        symbol: this.symbol,
+      });
       const nextSignal = normalizeSignal(rawSignal, bar, this.options.finalTP_R);
 
       if (nextSignal) {
         const signalRiskFraction = Number.isFinite(nextSignal.riskFraction)
           ? nextSignal.riskFraction
           : Number.isFinite(nextSignal.riskPct)
-          ? nextSignal.riskPct / 100
-          : this.options.riskPct / 100;
+            ? nextSignal.riskPct / 100
+            : this.options.riskPct / 100;
         const expiryBars = nextSignal._entryExpiryBars ?? 5;
         this.pending = {
           side: nextSignal.side,
@@ -907,13 +966,13 @@ export class BarSystemRunner {
           expiresAt: this.index + Math.max(1, expiryBars),
           startedAtIndex: this.index,
           meta: nextSignal,
-          plannedRiskAbs: Math.abs(
-            nextSignal._initRisk ?? (nextSignal.entry - nextSignal.stop)
-          ),
+          plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop),
         };
 
         if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
-          if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
+          if (
+            !this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)
+          ) {
             this.pending = null;
           }
         }
@@ -935,6 +994,10 @@ export class BarSystemRunner {
       eqSeries: this.eqSeries,
     });
     const positions = this.closed.filter((trade) => trade.exit.reason !== "SCALE");
+    const lastPrice = asNumber(this.candles[this.candles.length - 1]?.close);
+    const openPositions = this.open
+      ? [snapshotOpenPosition(this.open, lastPrice ?? this.open.entryFill ?? this.open.entry)]
+      : [];
 
     return {
       symbol: this.options.symbol,
@@ -942,6 +1005,7 @@ export class BarSystemRunner {
       range: this.options.range,
       trades: this.closed,
       positions,
+      openPositions,
       metrics,
       eqSeries: this.eqSeries,
       replay: {

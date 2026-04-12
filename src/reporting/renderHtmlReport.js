@@ -19,7 +19,8 @@ function candidateRoots() {
 }
 
 function readTemplate(relativePath) {
-  for (const root of candidateRoots()) {
+  const roots = candidateRoots();
+  for (const root of roots) {
     const absolutePath = path.join(root, relativePath);
     if (!fs.existsSync(absolutePath)) continue;
 
@@ -29,7 +30,9 @@ function readTemplate(relativePath) {
     return templateCache.get(absolutePath);
   }
 
-  throw new Error(`Could not locate template asset: ${relativePath}`);
+  throw new Error(
+    `Could not locate template asset: ${relativePath} (searched ${roots.length} roots starting from ${roots[0]})`
+  );
 }
 
 function fmt(value, digits = 2) {
@@ -135,9 +138,7 @@ function renderPositionRows(positions) {
           <td>${escapeHtml(fmt(exit.price, 4))}</td>
           <td>${escapeHtml(exit.reason ?? "—")}</td>
           <td>${escapeHtml(fmt(exit.pnl, 2))}</td>
-          <td>${escapeHtml(fmt(trade.mfeR ?? 0, 2))} / ${escapeHtml(
-            fmt(trade.maeR ?? 0, 2)
-          )}</td>
+          <td>${escapeHtml(fmt(trade.mfeR ?? 0, 2))} / ${escapeHtml(fmt(trade.maeR ?? 0, 2))}</td>
         </tr>
       `;
     })
@@ -259,10 +260,7 @@ export function renderHtmlReport({
     ["R p50 / p90", `${fmt(metrics.rDist?.p50 ?? 0, 2)} / ${fmt(metrics.rDist?.p90 ?? 0, 2)}`],
     [
       "Hold p50 / p90",
-      `${fmt(metrics.holdDistMin?.p50 ?? 0, 1)} / ${fmt(
-        metrics.holdDistMin?.p90 ?? 0,
-        1
-      )} min`,
+      `${fmt(metrics.holdDistMin?.p50 ?? 0, 1)} / ${fmt(metrics.holdDistMin?.p90 ?? 0, 1)} min`,
     ],
   ]);
 
@@ -306,10 +304,7 @@ export function exportHtmlReport({
   const safeSymbol = String(symbol).replace(/[^a-zA-Z0-9_.-]+/g, "_");
   const safeInterval = String(interval).replace(/[^a-zA-Z0-9_.-]+/g, "_");
   const safeRange = String(range).replace(/[^a-zA-Z0-9_.-]+/g, "_");
-  const outputPath = path.join(
-    outDir,
-    `report-${safeSymbol}-${safeInterval}-${safeRange}.html`
-  );
+  const outputPath = path.join(outDir, `report-${safeSymbol}-${safeInterval}-${safeRange}.html`);
 
   const html = renderHtmlReport({
     symbol,

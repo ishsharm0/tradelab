@@ -44,6 +44,8 @@ test("cli help prints available commands", () => {
 
   assert.match(output, /backtest/);
   assert.match(output, /walk-forward/);
+  assert.match(output, /live/);
+  assert.match(output, /status/);
 });
 
 test("cli backtest runs against CSV data and writes artifacts", () => {
@@ -137,4 +139,74 @@ test("cli walk-forward loads a local strategy module with signalFactory", () => 
   const parsed = JSON.parse(output);
   assert.ok(parsed.windows >= 2);
   assert.equal(typeof parsed.bestParamsSummary.adjacentRepeatRate, "number");
+});
+
+test("cli status reports persisted live namespaces", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tradelab-cli-status-"));
+  const nsDir = path.join(tmpDir, "sys-a");
+  fs.mkdirSync(nsDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(nsDir, "state.json"),
+    JSON.stringify({
+      openPosition: null,
+      pendingOrder: null,
+      equity: 1234,
+      candleBuffer: [],
+      strategyState: {},
+      lastBarTime: 1,
+      dayPnl: 0,
+      dayTrades: 0,
+      tradeIdCounter: 0,
+      savedAt: Date.now(),
+    }),
+    "utf8"
+  );
+  const output = execFileSync(process.execPath, [cliPath, "status", "--dir", tmpDir], {
+    cwd: path.resolve("."),
+    encoding: "utf8",
+  });
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.namespaces.length, 1);
+  assert.equal(parsed.namespaces[0].namespace, "sys-a");
+});
+
+test("cli live config uses configured paper equity and kebab-case flags", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tradelab-cli-live-"));
+  const configPath = path.join(tmpDir, "live.json");
+  const stateDir = path.join(tmpDir, "state");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({
+      equity: 24_000,
+      systems: [
+        { id: "sys-a", symbol: "AAA", interval: "1m", strategy: "buy-hold" },
+        { id: "sys-b", symbol: "BBB", interval: "1m", strategy: "buy-hold" },
+      ],
+    }),
+    "utf8"
+  );
+
+  const output = execFileSync(
+    process.execPath,
+    [
+      cliPath,
+      "live",
+      "--config",
+      configPath,
+      "--paper",
+      "--mode",
+      "polling",
+      "--once",
+      "true",
+      "--state-dir",
+      stateDir,
+    ],
+    {
+      cwd: path.resolve("."),
+      encoding: "utf8",
+    }
+  );
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.systems.length, 2);
+  assert.equal(parsed.aggregateEquity, 24_000);
 });

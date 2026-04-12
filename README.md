@@ -3,19 +3,19 @@
 
   <p><strong>A Node.js backtesting toolkit for serious trading strategy research.</strong></p>
 
-  [![npm version](https://img.shields.io/npm/v/tradelab?color=0f172a&label=npm&logo=npm)](https://www.npmjs.com/package/tradelab)
-  [![GitHub](https://img.shields.io/badge/github-ishsharm0/tradelab-0f172a?logo=github)](https://github.com/ishsharm0/tradelab)
-  [![License: MIT](https://img.shields.io/badge/license-MIT-0f172a)](https://github.com/ishsharm0/tradelab/blob/main/LICENSE)
-  [![Node.js](https://img.shields.io/badge/node-%3E%3D18-0f172a?logo=node.js)](https://nodejs.org)
-  [![TypeScript](https://img.shields.io/badge/TypeScript-ready-0f172a?logo=typescript)](https://github.com/ishsharm0/tradelab/blob/main/types/index.d.ts)
+[![npm version](https://img.shields.io/npm/v/tradelab?color=0f172a&label=npm&logo=npm)](https://www.npmjs.com/package/tradelab)
+[![GitHub](https://img.shields.io/badge/github-ishsharm0/tradelab-0f172a?logo=github)](https://github.com/ishsharm0/tradelab)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0f172a)](https://github.com/ishsharm0/tradelab/blob/main/LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-0f172a?logo=node.js)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-ready-0f172a?logo=typescript)](https://github.com/ishsharm0/tradelab/blob/main/types/index.d.ts)
 
 </div>
 
 ---
 
-**tradelab** handles the simulation, sizing, exits, costs, and result exports; you bring the data and signal logic.
+**tradelab** handles strategy research and execution workflows in one package.
 
-It works cleanly for a single-strategy backtest and scales up to portfolio runs, walk-forward testing, and detailed execution modeling. It is not a broker connector or a live trading tool.
+Use it for backtests, portfolio and walk-forward validation, and live or paper execution through broker adapters while keeping the same `signal()` contract.
 
 ```bash
 npm install tradelab
@@ -32,6 +32,7 @@ npm install tradelab
 - [Portfolio mode](#portfolio-mode)
 - [Walk-forward optimization](#walk-forward-optimization)
 - [Tick backtests](#tick-backtests)
+- [Live trading](#live-trading)
 - [Execution and cost modeling](#execution-and-cost-modeling)
 - [Exports and reporting](#exports-and-reporting)
 - [CLI](#cli)
@@ -42,15 +43,16 @@ npm install tradelab
 
 ## What it includes
 
-| Area | What you get |
-|---|---|
-| **Engine** | Candle and tick backtests with position sizing, exits, replay capture, and cost models |
-| **Portfolio** | Multi-system shared-capital simulation with live capital locking and daily loss halts |
-| **Walk-forward** | Rolling and anchored train/test validation with parameter search and stability summaries |
-| **Data** | Yahoo Finance downloads, CSV import, and local cache helpers |
-| **Costs** | Slippage, spread, and commission modeling |
-| **Exports** | HTML reports, metrics JSON, and trade CSV |
-| **Dev experience** | TypeScript definitions, ESM/CJS support, CLI for quick runs |
+| Area               | What you get                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| **Engine**         | Candle and tick backtests with position sizing, exits, replay capture, and cost models   |
+| **Portfolio**      | Multi-system shared-capital simulation with live capital locking and daily loss halts    |
+| **Walk-forward**   | Rolling and anchored train/test validation with parameter search and stability summaries |
+| **Live execution** | Live and paper engines with broker adapters, state persistence, and orchestration        |
+| **Data**           | Yahoo Finance downloads, CSV import, and local cache helpers                             |
+| **Costs**          | Slippage, spread, and commission modeling                                                |
+| **Exports**        | HTML reports, metrics JSON, and trade CSV                                                |
+| **Dev experience** | TypeScript definitions, ESM/CJS support, CLI for quick runs                              |
 
 ---
 
@@ -108,7 +110,7 @@ const candles = await getHistoricalCandles({
   symbol: "SPY",
   interval: "1d",
   period: "2y",
-  cache: true,       // reuses local copy on repeated runs
+  cache: true, // reuses local copy on repeated runs
 });
 
 const result = backtest({ candles, symbol: "SPY", interval: "1d", range: "2y", signal });
@@ -161,16 +163,16 @@ The minimum viable signal is just `side`, `stop`, and `rr`. Start there and add 
 
 ### Key backtest options
 
-| Option | Purpose |
-|---|---|
-| `equity` | Starting equity (default `10000`) |
-| `riskPct` | Percent of equity risked per trade |
-| `warmupBars` | Bars skipped before signal evaluation starts |
-| `flattenAtClose` | Forces end-of-day exit when enabled |
-| `costs` | Slippage, spread, and commission model |
-| `strict` | Throws on lookahead access |
-| `collectEqSeries` | Enables equity curve output |
-| `collectReplay` | Enables visualization payload |
+| Option            | Purpose                                      |
+| ----------------- | -------------------------------------------- |
+| `equity`          | Starting equity (default `10000`)            |
+| `riskPct`         | Percent of equity risked per trade           |
+| `warmupBars`      | Bars skipped before signal evaluation starts |
+| `flattenAtClose`  | Forces end-of-day exit when enabled          |
+| `costs`           | Slippage, spread, and commission model       |
+| `strict`          | Throws on lookahead access                   |
+| `collectEqSeries` | Enables equity curve output                  |
+| `collectReplay`   | Enables visualization payload                |
 
 ### Result shape
 
@@ -229,7 +231,7 @@ const wf = walkForwardOptimize({
   stepBars: 60,
   scoreBy: "profitFactor",
   parameterSets: [
-    { fast: 8,  slow: 21, rr: 2 },
+    { fast: 8, slow: 21, rr: 2 },
     { fast: 10, slow: 30, rr: 2 },
   ],
   signalFactory(params) {
@@ -257,6 +259,40 @@ const result = backtestTicks({
 ```
 
 Market entries fill on the next tick, limit orders can fill at the touch with configurable queue probability, and stop exits use the existing cost model with stop-specific slippage if you provide it in `costs.slippageByKind.stop`.
+
+---
+
+## Live trading
+
+`tradelab/live` provides the live stack:
+
+- `LiveEngine` for single-system live/paper execution
+- `LiveOrchestrator` for multi-system execution with shared broker state
+- `PaperEngine` implementing the broker interface for deterministic simulation
+- broker adapters for Alpaca, Binance, Coinbase, and Interactive Brokers
+- JSON state/trade/equity persistence via `JsonFileStorage`
+
+Use the same signal contract from backtesting in live mode:
+
+```js
+import { LiveEngine, PaperEngine, JsonFileStorage } from "tradelab/live";
+
+const engine = new LiveEngine({
+  id: "aapl-1m",
+  symbol: "AAPL",
+  interval: "1m",
+  broker: new PaperEngine({ equity: 25_000 }),
+  storage: new JsonFileStorage({ baseDir: "./output/live-state" }),
+  signal({ bar, openPosition }) {
+    if (openPosition) return null;
+    return { side: "long", stop: bar.close - 1, rr: 2 };
+  },
+});
+
+await engine.start();
+```
+
+See [docs/live-trading.md](docs/live-trading.md) for API and CLI workflows.
 
 ---
 
@@ -302,12 +338,12 @@ exportBacktestArtifacts({ result, outDir: "./output" });
 
 Or use the narrower helpers:
 
-| Helper | Output |
-|---|---|
-| `exportHtmlReport(options)` | Interactive HTML report written to disk |
-| `renderHtmlReport(options)` | HTML report returned as a string |
-| `exportTradesCsv(trades, options)` | Flat trade ledger for spreadsheets or pandas |
-| `exportMetricsJSON(options)` | Machine-readable metrics for dashboards or automation |
+| Helper                             | Output                                                |
+| ---------------------------------- | ----------------------------------------------------- |
+| `exportHtmlReport(options)`        | Interactive HTML report written to disk               |
+| `renderHtmlReport(options)`        | HTML report returned as a string                      |
+| `exportTradesCsv(trades, options)` | Flat trade ledger for spreadsheets or pandas          |
+| `exportMetricsJSON(options)`       | Machine-readable metrics for dashboards or automation |
 
 For programmatic pipelines, `exportMetricsJSON` is usually the most useful format to build on.
 
@@ -334,6 +370,15 @@ npx tradelab portfolio \
 npx tradelab walk-forward \
   --source yahoo --symbol QQQ --interval 1d --period 2y \
   --trainBars 180 --testBars 60 --mode anchored
+
+# Live paper engine (single system)
+npx tradelab paper --symbol AAPL --interval 1m --mode polling --once true
+
+# Live orchestrator from config
+npx tradelab live --config ./live-portfolio.json --paper --mode polling --once true
+
+# Inspect persisted live state
+npx tradelab status --dir ./output/live-state
 
 # Prefetch and cache data
 npx tradelab prefetch --symbol SPY --interval 1d --period 1y
@@ -364,6 +409,7 @@ The examples are a good place to start if you want something runnable before wir
 ```js
 import { backtest, getHistoricalCandles, ema } from "tradelab";
 import { fetchHistorical } from "tradelab/data";
+import { LiveEngine, PaperEngine } from "tradelab/live";
 ```
 
 ### CommonJS
@@ -371,18 +417,20 @@ import { fetchHistorical } from "tradelab/data";
 ```js
 const { backtest, getHistoricalCandles, ema } = require("tradelab");
 const { fetchHistorical } = require("tradelab/data");
+const { LiveEngine, PaperEngine } = require("tradelab/live");
 ```
 
 ---
 
 ## Documentation
 
-| Guide | What it covers |
-|---|---|
-| [Backtest engine](docs/backtest-engine.md) | Signal contract, all options, result shape, portfolio mode, walk-forward |
-| [Data, reporting, and CLI](docs/data-reporting-cli.md) | Data loading, cache behavior, exports, CLI reference |
-| [Strategy examples](docs/examples.md) | Mean reversion, breakout, sentiment, LLM, and portfolio strategy patterns |
-| [API reference](docs/api-reference.md) | Compact index of every public export |
+| Guide                                                  | What it covers                                                                 |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| [Backtest engine](docs/backtest-engine.md)             | Signal contract, all options, result shape, portfolio mode, walk-forward       |
+| [Data, reporting, and CLI](docs/data-reporting-cli.md) | Data loading, cache behavior, exports, CLI reference                           |
+| [Live trading](docs/live-trading.md)                   | Live engine, broker adapters, paper mode, orchestration, and state persistence |
+| [Strategy examples](docs/examples.md)                  | Mean reversion, breakout, sentiment, LLM, and portfolio strategy patterns      |
+| [API reference](docs/api-reference.md)                 | Compact index of every public export                                           |
 
 ---
 
@@ -401,4 +449,4 @@ const { fetchHistorical } = require("tradelab/data");
 - Node `18+` is required
 - Yahoo downloads are cached under `output/data` by default
 - CommonJS and ESM are both supported
-- The engine is built for historical research - not brokerage execution or full exchange microstructure simulation
+- Live adapters support broker execution workflows, but this is still not an exchange microstructure simulator

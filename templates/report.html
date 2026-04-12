@@ -4,7 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{TITLE}} backtest</title>
-    <style>{{CSS}}</style>
+    <style>
+      {{CSS}}
+    </style>
   </head>
   <body>
     <main class="report-shell">
@@ -17,9 +19,7 @@
         <div class="hero-pill">{{HERO_PILL}}</div>
       </header>
 
-      <section class="metric-grid">
-        {{METRIC_CARDS}}
-      </section>
+      <section class="metric-grid">{{METRIC_CARDS}}</section>
 
       <section class="panel-grid">
         <article class="panel panel--wide">
@@ -36,7 +36,9 @@
             <p>Headline stats for completed positions.</p>
           </div>
           <table class="data-table">
-            <tbody>{{SUMMARY_ROWS}}</tbody>
+            <tbody>
+              {{SUMMARY_ROWS}}
+            </tbody>
           </table>
         </article>
 
@@ -70,7 +72,9 @@
             <p>Long/short split and distribution snapshots.</p>
           </div>
           <table class="data-table">
-            <tbody>{{BREAKDOWN_ROWS}}</tbody>
+            <tbody>
+              {{BREAKDOWN_ROWS}}
+            </tbody>
           </table>
         </article>
 
@@ -92,15 +96,25 @@
                   <th>MFE / MAE</th>
                 </tr>
               </thead>
-              <tbody>{{POSITION_ROWS}}</tbody>
+              <tbody>
+                {{POSITION_ROWS}}
+              </tbody>
             </table>
           </div>
         </article>
       </section>
     </main>
 
-    <script id="report-data" type="application/json">{{REPORT_DATA_JSON}}</script>
+    <script id="report-data" type="application/json">
+      {{REPORT_DATA_JSON}}
+    </script>
     <script src="{{PLOTLY_CDN_URL}}"></script>
-    <script>{{REPORT_JS}}</script>
+    <script>
+      {
+        {
+          REPORT_JS;
+        }
+      }
+    </script>
   </body>
 </html>

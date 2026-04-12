@@ -16,11 +16,7 @@ function sortino(values) {
   const losses = values.filter((value) => value < 0);
   const downsideDeviation = stddev(losses.length ? losses : [0]);
   const avg = mean(values);
-  return downsideDeviation === 0
-    ? avg > 0
-      ? Infinity
-      : 0
-    : avg / downsideDeviation;
+  return downsideDeviation === 0 ? (avg > 0 ? Infinity : 0) : avg / downsideDeviation;
 }
 
 function dayKeyUTC(timeMs) {
@@ -36,10 +32,7 @@ function tradeRMultiple(trade) {
   const initialRisk = trade._initRisk || 0;
   if (initialRisk <= 0) return 0;
   const entry = trade.entryFill ?? trade.entry;
-  const perUnit =
-    trade.side === "long"
-      ? trade.exit.price - entry
-      : entry - trade.exit.price;
+  const perUnit = trade.side === "long" ? trade.exit.price - entry : entry - trade.exit.price;
   return perUnit / initialRisk;
 }
 
@@ -127,6 +120,15 @@ function percentile(values, percentileRank) {
   return sorted[index];
 }
 
+const PROFIT_FACTOR_CAP = 1_000_000;
+
+function finiteProfitFactor(grossProfit, grossLoss) {
+  if (grossLoss === 0) {
+    return grossProfit > 0 ? PROFIT_FACTOR_CAP : 0;
+  }
+  return grossProfit / grossLoss;
+}
+
 /**
  * Build aggregate backtest metrics for completed positions and realized trade legs.
  *
@@ -134,14 +136,7 @@ function percentile(values, percentileRank) {
  * `profitFactor`, `winRate`, `expectancy`, `maxDrawdown`, `sharpe`, `avgHold`,
  * and `sideBreakdown`, while preserving the more specific legacy fields.
  */
-export function buildMetrics({
-  closed,
-  equityStart,
-  equityFinal,
-  candles,
-  estBarMs,
-  eqSeries,
-}) {
+export function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqSeries }) {
   const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
   const completedTrades = [];
   const tradeRs = [];
@@ -233,18 +228,8 @@ export function buildMetrics({
       : mean(tradeReturns) / tradeReturnStd;
   const sortinoPerTrade = sortino(tradeReturns);
 
-  const profitFactorPositions =
-    grossLossPositions === 0
-      ? grossProfitPositions > 0
-        ? Infinity
-        : 0
-      : grossProfitPositions / grossLossPositions;
-  const profitFactorLegs =
-    grossLossLegs === 0
-      ? grossProfitLegs > 0
-        ? Infinity
-        : 0
-      : grossProfitLegs / grossLossLegs;
+  const profitFactorPositions = finiteProfitFactor(grossProfitPositions, grossLossPositions);
+  const profitFactorLegs = finiteProfitFactor(grossProfitLegs, grossLossLegs);
   const returnPct = (equityFinal - equityStart) / Math.max(1e-12, equityStart);
   const calmar = maxDrawdown === 0 ? (returnPct > 0 ? Infinity : 0) : returnPct / maxDrawdown;
 
@@ -253,9 +238,7 @@ export function buildMetrics({
   const avgHoldMin = mean(holdDurationsMinutes);
 
   const equitySeries =
-    eqSeries && eqSeries.length
-      ? eqSeries
-      : buildEquitySeriesFromLegs({ legs, equityStart });
+    eqSeries && eqSeries.length ? eqSeries : buildEquitySeriesFromLegs({ legs, equityStart });
   const dailyReturnsSeries = dailyReturns(equitySeries);
   const dailyStd = stddev(dailyReturnsSeries);
   const sharpeDaily =
@@ -288,17 +271,13 @@ export function buildMetrics({
   const sideBreakdown = {
     long: {
       trades: longTradesCount,
-      winRate: longTradesCount
-        ? longTradeWins / longTradesCount
-        : 0,
+      winRate: longTradesCount ? longTradeWins / longTradesCount : 0,
       avgPnL: longTradesCount ? longPnLSum / longTradesCount : 0,
       avgR: mean(longRs),
     },
     short: {
       trades: shortTradesCount,
-      winRate: shortTradesCount
-        ? shortTradeWins / shortTradesCount
-        : 0,
+      winRate: shortTradesCount ? shortTradeWins / shortTradesCount : 0,
       avgPnL: shortTradesCount ? shortPnLSum / shortTradesCount : 0,
       avgR: mean(shortRs),
     },
@@ -328,9 +307,7 @@ export function buildMetrics({
     startEquity: equityStart,
     profitFactor_pos: profitFactorPositions,
     profitFactor_leg: profitFactorLegs,
-    winRate_pos: completedTrades.length
-      ? winningTradeCount / completedTrades.length
-      : 0,
+    winRate_pos: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
     winRate_leg: legs.length ? winningLegCount / legs.length : 0,
     sharpeDaily,
     sortinoDaily,

@@ -21,7 +21,9 @@ function resolveDate(value, customDateParser) {
     if (Number.isFinite(time)) return time;
   }
 
-  const raw = String(value).trim().replace(/^['"]|['"]$/g, "");
+  const raw = String(value)
+    .trim()
+    .replace(/^['"]|['"]$/g, "");
   const numeric = Number(raw);
   if (Number.isFinite(numeric)) {
     return numeric < 1e11 ? numeric * 1000 : numeric;
@@ -108,7 +110,7 @@ function normalizeDateBoundary(value, fallback) {
 export function normalizeCandles(candles) {
   if (!Array.isArray(candles)) return [];
 
-  const normalized = candles
+  const parsed = candles
     .map((bar) => {
       try {
         const time = resolveDate(bar?.time ?? bar?.timestamp ?? bar?.date);
@@ -140,8 +142,18 @@ export function normalizeCandles(candles) {
         return null;
       }
     })
-    .filter(Boolean)
-    .sort((left, right) => left.time - right.time);
+    .filter(Boolean);
+
+  let reordered = false;
+  let duplicateCount = 0;
+  for (let index = 1; index < parsed.length; index += 1) {
+    const prev = parsed[index - 1].time;
+    const current = parsed[index].time;
+    if (current < prev) reordered = true;
+    if (current === prev) duplicateCount += 1;
+  }
+
+  const normalized = parsed.sort((left, right) => left.time - right.time);
 
   const deduped = [];
   let lastTime = null;
@@ -149,6 +161,12 @@ export function normalizeCandles(candles) {
     if (candle.time === lastTime) continue;
     deduped.push(candle);
     lastTime = candle.time;
+  }
+  const removedDuplicates = normalized.length - deduped.length;
+  if (reordered || removedDuplicates > 0 || duplicateCount > 0) {
+    console.warn(
+      `[tradelab] normalizeCandles() reordered or deduplicated candles (input=${candles.length}, valid=${parsed.length}, output=${deduped.length})`
+    );
   }
   return deduped;
 }
@@ -197,16 +215,8 @@ export function loadCandlesFromCSV(filePath, options = {}) {
   const closeIdx = resolveColumn(closeCol, headerIndex, ["c", "adj close"]);
   const volumeIdx = resolveColumn(volumeCol, headerIndex, ["v", "vol", "quantity"]);
 
-  if (
-    timeIdx < 0 ||
-    openIdx < 0 ||
-    highIdx < 0 ||
-    lowIdx < 0 ||
-    closeIdx < 0
-  ) {
-    throw new Error(
-      `Could not resolve required CSV columns in ${path.basename(filePath)}`
-    );
+  if (timeIdx < 0 || openIdx < 0 || highIdx < 0 || lowIdx < 0 || closeIdx < 0) {
+    throw new Error(`Could not resolve required CSV columns in ${path.basename(filePath)}`);
   }
 
   const minTime = normalizeDateBoundary(startDate, -Infinity);

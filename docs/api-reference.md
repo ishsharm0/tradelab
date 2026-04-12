@@ -1,5 +1,5 @@
-
 # API reference
+
 <small>[Back to main page](README.md)</small>
 
 This page is the compact index of public exports.
@@ -8,39 +8,94 @@ If you are learning the package, start with [backtest-engine.md](backtest-engine
 
 ## Backtesting
 
-| Export | Summary |
-| --- | --- |
-| `backtest(options)` | Run one strategy on one candle series |
-| `backtestTicks(options)` | Run one strategy on tick or quote data |
-| `backtestPortfolio(options)` | Run multiple systems through a shared-capital portfolio engine |
-| `walkForwardOptimize(options)` | Run rolling or anchored train/test validation |
-| `buildMetrics(input)` | Compute metrics from realized trades and equity data |
+| Export                         | Summary                                                        |
+| ------------------------------ | -------------------------------------------------------------- |
+| `backtest(options)`            | Run one strategy on one candle series                          |
+| `backtestTicks(options)`       | Run one strategy on tick or quote data                         |
+| `backtestPortfolio(options)`   | Run multiple systems through a shared-capital portfolio engine |
+| `walkForwardOptimize(options)` | Run rolling or anchored train/test validation                  |
+| `buildMetrics(input)`          | Compute metrics from realized trades and equity data           |
 
 ## Data
 
-| Export | Summary |
-| --- | --- |
-| `getHistoricalCandles(options)` | Load candles from Yahoo or CSV |
-| `backtestHistorical({ data, backtestOptions })` | Load candles and immediately run `backtest()` |
-| `fetchHistorical(symbol, interval, period, options)` | Call the Yahoo layer directly |
-| `fetchLatestCandle(symbol, interval, options)` | Fetch the latest Yahoo candle |
-| `loadCandlesFromCSV(filePath, options)` | Parse and normalize a CSV file |
-| `normalizeCandles(candles)` | Normalize candle field names and sort/dedupe |
-| `mergeCandles(...arrays)` | Merge multiple candle arrays |
-| `candleStats(candles)` | Return summary stats for a candle array |
-| `saveCandlesToCache(candles, meta)` | Write normalized candles to the local cache |
-| `loadCandlesFromCache(symbol, interval, period, outDir)` | Read normalized candles from the local cache |
-| `cachedCandlesPath(symbol, interval, period, outDir)` | Return the expected cache path |
+| Export                                                   | Summary                                       |
+| -------------------------------------------------------- | --------------------------------------------- |
+| `getHistoricalCandles(options)`                          | Load candles from Yahoo or CSV                |
+| `backtestHistorical({ data, backtestOptions })`          | Load candles and immediately run `backtest()` |
+| `fetchHistorical(symbol, interval, period, options)`     | Call the Yahoo layer directly                 |
+| `fetchLatestCandle(symbol, interval, options)`           | Fetch the latest Yahoo candle                 |
+| `loadCandlesFromCSV(filePath, options)`                  | Parse and normalize a CSV file                |
+| `normalizeCandles(candles)`                              | Normalize candle field names and sort/dedupe  |
+| `mergeCandles(...arrays)`                                | Merge multiple candle arrays                  |
+| `candleStats(candles)`                                   | Return summary stats for a candle array       |
+| `saveCandlesToCache(candles, meta)`                      | Write normalized candles to the local cache   |
+| `loadCandlesFromCache(symbol, interval, period, outDir)` | Read normalized candles from the local cache  |
+| `cachedCandlesPath(symbol, interval, period, outDir)`    | Return the expected cache path                |
 
 ## Reporting
 
-| Export | Summary |
-| --- | --- |
-| `renderHtmlReport(options)` | Return the HTML report as a string |
-| `exportHtmlReport(options)` | Write the HTML report to disk |
-| `exportTradesCsv(trades, options)` | Write a CSV ledger of trades or positions |
-| `exportMetricsJSON(options)` | Write machine-readable metrics JSON |
+| Export                             | Summary                                    |
+| ---------------------------------- | ------------------------------------------ |
+| `renderHtmlReport(options)`        | Return the HTML report as a string         |
+| `exportHtmlReport(options)`        | Write the HTML report to disk              |
+| `exportTradesCsv(trades, options)` | Write a CSV ledger of trades or positions  |
+| `exportMetricsJSON(options)`       | Write machine-readable metrics JSON        |
 | `exportBacktestArtifacts(options)` | Write HTML, CSV, and metrics JSON together |
+
+## Live module (`tradelab/live`)
+
+Live exports are under a separate entrypoint:
+
+```js
+import { LiveEngine, PaperEngine } from "tradelab/live";
+```
+
+### Engine and orchestration
+
+- `LiveEngine`
+- `LiveOrchestrator`
+- `PaperEngine`
+- `CandleAggregator`
+- `RiskManager`
+- `StateManager`
+
+### Broker and feed adapters
+
+- `BrokerAdapter`
+- `AlpacaBroker`
+- `BinanceBroker`
+- `CoinbaseBroker`
+- `InteractiveBrokersBroker`
+- `FeedProvider`
+- `BrokerFeed`
+- `PollingFeed`
+
+### Storage and runtime utilities
+
+- `StorageProvider`
+- `JsonFileStorage`
+- `EventBus`
+- `LiveLogger`
+- `BrokerClock`
+
+### Factories
+
+- `createLiveEngine(options)`
+- `createLiveOrchestrator(options)`
+- `createPaperEngine(options)`
+- `createAlpacaBroker(options)`
+- `createBinanceBroker(options)`
+- `createCoinbaseBroker(options)`
+- `createInteractiveBrokersBroker(options)`
+- `createBrokerFeed(options)`
+- `createPollingFeed(options)`
+- `createJsonFileStorage(options)`
+- `createCandleAggregator(options)`
+- `createRiskManager(options)`
+- `createStateManager(options)`
+- `createEventBus()`
+- `createLogger(options)`
+- `createClock(options)`
 
 ## Indicators and utilities
 
@@ -70,6 +125,9 @@ If you are learning the package, start with [backtest-engine.md](backtest-engine
 
 ## Types
 
-The package ships declarations in [../types/index.d.ts](../types/index.d.ts). Use that file when you need the exact option and result contracts in TypeScript or editor IntelliSense.
+The package ships declarations in:
+
+- [../types/index.d.ts](../types/index.d.ts) for the main module
+- [../types/live.d.ts](../types/live.d.ts) for `tradelab/live`
 
 <small>[Back to main page](README.md)</small>

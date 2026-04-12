@@ -30,3 +30,9 @@ await build({
   entryPoints: [path.join(rootDir, "src", "data", "index.js")],
   outfile: path.join(outDir, "data.cjs"),
 });
+
+await build({
+  ...shared,
+  entryPoints: [path.join(rootDir, "src", "live", "index.js")],
+  outfile: path.join(outDir, "live.cjs"),
+});

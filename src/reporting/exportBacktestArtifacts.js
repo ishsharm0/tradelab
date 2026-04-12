@@ -24,10 +24,7 @@ export function exportBacktestArtifacts({
     metrics: null,
   };
 
-  const csvTrades =
-    csvSource === "trades"
-      ? result.trades
-      : result.positions ?? result.trades;
+  const csvTrades = csvSource === "trades" ? result.trades : (result.positions ?? result.trades);
 
   if (exportCsv) {
     outputs.csv = exportTradesCsv(csvTrades, {

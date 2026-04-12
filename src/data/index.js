@@ -97,11 +97,7 @@ export async function getHistoricalCandles(options = {}) {
   return candles;
 }
 
-export async function backtestHistorical({
-  backtestOptions = {},
-  data,
-  ...legacy
-} = {}) {
+export async function backtestHistorical({ backtestOptions = {}, data, ...legacy } = {}) {
   const candles = await getHistoricalCandles(data || legacy);
   return runBacktest({
     candles,

@@ -1,3 +1,4 @@
+"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -87,6 +88,14 @@ function atr(bars, period = 14) {
 function roundStep(value, step) {
   return Math.floor(value / step) * step;
 }
+var warnedNonPositiveEquity = false;
+function warnNonPositiveEquity(equity) {
+  if (warnedNonPositiveEquity) return;
+  warnedNonPositiveEquity = true;
+  console.warn(
+    `[tradelab] calculatePositionSize() received non-positive equity (${equity}); returning size 0`
+  );
+}
 function calculatePositionSize({
   equity,
   entry,
@@ -96,6 +105,10 @@ function calculatePositionSize({
   minQty = 1e-3,
   maxLeverage = 2
 }) {
+  if (!Number.isFinite(equity) || equity <= 0) {
+    warnNonPositiveEquity(equity);
+    return 0;
+  }
   const riskPerUnit = Math.abs(entry - stop);
   if (!Number.isFinite(riskPerUnit) || riskPerUnit <= 0) return 0;
   const maxRiskDollars = Math.max(0, equity * riskFraction);
@@ -207,14 +220,14 @@ function percentile(values, percentileRank) {
   const index = Math.floor((sorted.length - 1) * percentileRank);
   return sorted[index];
 }
-function buildMetrics({
-  closed,
-  equityStart,
-  equityFinal,
-  candles,
-  estBarMs,
-  eqSeries
-}) {
+var PROFIT_FACTOR_CAP = 1e6;
+function finiteProfitFactor(grossProfit, grossLoss) {
+  if (grossLoss === 0) {
+    return grossProfit > 0 ? PROFIT_FACTOR_CAP : 0;
+  }
+  return grossProfit / grossLoss;
+}
+function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqSeries }) {
   const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
   const completedTrades = [];
   const tradeRs = [];
@@ -290,8 +303,8 @@ function buildMetrics({
   const tradeReturnStd = stddev(tradeReturns);
   const sharpePerTrade = tradeReturnStd === 0 ? tradeReturns.length ? Infinity : 0 : mean(tradeReturns) / tradeReturnStd;
   const sortinoPerTrade = sortino(tradeReturns);
-  const profitFactorPositions = grossLossPositions === 0 ? grossProfitPositions > 0 ? Infinity : 0 : grossProfitPositions / grossLossPositions;
-  const profitFactorLegs = grossLossLegs === 0 ? grossProfitLegs > 0 ? Infinity : 0 : grossProfitLegs / grossLossLegs;
+  const profitFactorPositions = finiteProfitFactor(grossProfitPositions, grossLossPositions);
+  const profitFactorLegs = finiteProfitFactor(grossProfitLegs, grossLossLegs);
   const returnPct = (equityFinal - equityStart) / Math.max(1e-12, equityStart);
   const calmar = maxDrawdown === 0 ? returnPct > 0 ? Infinity : 0 : returnPct / maxDrawdown;
   const totalBars = Math.max(1, candles.length);
@@ -460,7 +473,7 @@ function normalizeDateBoundary(value, fallback) {
 }
 function normalizeCandles(candles) {
   if (!Array.isArray(candles)) return [];
-  const normalized = candles.map((bar) => {
+  const parsed = candles.map((bar) => {
     try {
       const time = resolveDate(bar?.time ?? bar?.timestamp ?? bar?.date);
       const open = Number(bar?.open ?? bar?.o);
@@ -482,13 +495,28 @@ function normalizeCandles(candles) {
     } catch {
       return null;
     }
-  }).filter(Boolean).sort((left, right) => left.time - right.time);
+  }).filter(Boolean);
+  let reordered = false;
+  let duplicateCount = 0;
+  for (let index = 1; index < parsed.length; index += 1) {
+    const prev = parsed[index - 1].time;
+    const current = parsed[index].time;
+    if (current < prev) reordered = true;
+    if (current === prev) duplicateCount += 1;
+  }
+  const normalized = parsed.sort((left, right) => left.time - right.time);
   const deduped = [];
   let lastTime = null;
   for (const candle of normalized) {
     if (candle.time === lastTime) continue;
     deduped.push(candle);
     lastTime = candle.time;
+  }
+  const removedDuplicates = normalized.length - deduped.length;
+  if (reordered || removedDuplicates > 0 || duplicateCount > 0) {
+    console.warn(
+      `[tradelab] normalizeCandles() reordered or deduplicated candles (input=${candles.length}, valid=${parsed.length}, output=${deduped.length})`
+    );
   }
   return deduped;
 }
@@ -532,9 +560,7 @@ function loadCandlesFromCSV(filePath, options = {}) {
   const closeIdx = resolveColumn(closeCol, headerIndex, ["c", "adj close"]);
   const volumeIdx = resolveColumn(volumeCol, headerIndex, ["v", "vol", "quantity"]);
   if (timeIdx < 0 || openIdx < 0 || highIdx < 0 || lowIdx < 0 || closeIdx < 0) {
-    throw new Error(
-      `Could not resolve required CSV columns in ${import_path.default.basename(filePath)}`
-    );
+    throw new Error(`Could not resolve required CSV columns in ${import_path.default.basename(filePath)}`);
   }
   const minTime = normalizeDateBoundary(startDate, -Infinity);
   const maxTime = normalizeDateBoundary(endDate, Infinity);
@@ -649,18 +675,12 @@ function usDstBoundsUTC(year) {
     if (sundaysSeen === 2) break;
     marchCursor = new Date(marchCursor.getTime() + 24 * 60 * 60 * 1e3);
   }
-  const dstStart = new Date(
-    Date.UTC(year, 2, marchCursor.getUTCDate(), 7, 0, 0)
-  );
+  const dstStart = new Date(Date.UTC(year, 2, marchCursor.getUTCDate(), 7, 0, 0));
   let novemberCursor = new Date(Date.UTC(year, 10, 1, 6, 0, 0));
   while (novemberCursor.getUTCDay() !== 0) {
-    novemberCursor = new Date(
-      novemberCursor.getTime() + 24 * 60 * 60 * 1e3
-    );
+    novemberCursor = new Date(novemberCursor.getTime() + 24 * 60 * 60 * 1e3);
   }
-  const dstEnd = new Date(
-    Date.UTC(year, 10, novemberCursor.getUTCDate(), 6, 0, 0)
-  );
+  const dstEnd = new Date(Date.UTC(year, 10, novemberCursor.getUTCDate(), 6, 0, 0));
   return { dstStart, dstEnd };
 }
 function isUsEasternDST(timeMs) {
@@ -691,11 +711,7 @@ function applyFill(price, side, { slippageBps = 0, feeBps = 0, kind = "market", 
   const model = costs || {};
   const modelSlippageBps = Number.isFinite(model.slippageBps) ? model.slippageBps : slippageBps;
   const modelFeeBps = Number.isFinite(model.commissionBps) ? model.commissionBps : feeBps;
-  const effectiveSlippageBps = resolveSlippageBps(
-    kind,
-    modelSlippageBps,
-    model.slippageByKind
-  );
+  const effectiveSlippageBps = resolveSlippageBps(kind, modelSlippageBps, model.slippageByKind);
   const halfSpreadBps = Number.isFinite(model.spreadBps) ? model.spreadBps / 2 : 0;
   const slippage = (effectiveSlippageBps + halfSpreadBps) / 1e4 * price;
   const filledPrice = side === "long" ? price + slippage : price - slippage;
@@ -722,14 +738,7 @@ function touchedLimit(side, limitPrice, bar, mode = "intrabar") {
   }
   return side === "long" ? bar.low <= limitPrice : bar.high >= limitPrice;
 }
-function ocoExitCheck({
-  side,
-  stop,
-  tp,
-  bar,
-  mode = "intrabar",
-  tieBreak = "pessimistic"
-}) {
+function ocoExitCheck({ side, stop, tp, bar, mode = "intrabar", tieBreak = "pessimistic" }) {
   if (mode === "close") {
     const close = bar.close;
     if (side === "long") {
@@ -810,12 +819,50 @@ function strictHistoryView(candles, currentIndex) {
     get(target, property, receiver) {
       if (isArrayIndexKey(property) && Number(property) >= target.length) {
         throw new Error(
-          `strict mode: signal() tried to access candles[${property}] beyond current index ${currentIndex}`
+          `strict mode: signal() tried to access candles[${String(property)}] beyond current index ${currentIndex}`
         );
       }
       return Reflect.get(target, property, receiver);
     }
   });
+}
+function describeValue(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+function formatIsoTime(time) {
+  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
+}
+function callSignalWithContext({ signal, context, index, bar, symbol }) {
+  try {
+    return signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
+}
+function snapshotOpenPosition(open, markPrice) {
+  if (!open) return null;
+  const entryPrice = open.entryFill ?? open.entry;
+  const direction = open.side === "long" ? 1 : -1;
+  const unrealizedPnl = (markPrice - entryPrice) * direction * open.size;
+  return {
+    id: open.id,
+    symbol: open.symbol,
+    side: open.side,
+    size: open.size,
+    entry: open.entry,
+    entryFill: open.entryFill,
+    stop: open.stop,
+    takeProfit: open.takeProfit,
+    openTime: open.openTime,
+    markPrice,
+    unrealizedPnl,
+    _initRisk: open._initRisk
+  };
 }
 function mergeOptions(options) {
   const normalizedRiskPct = Number.isFinite(options.riskFraction) ? options.riskFraction * 100 : options.riskPct;
@@ -958,10 +1005,10 @@ function backtest(rawOptions) {
     strict
   } = options;
   if (!Array.isArray(candles) || candles.length === 0) {
-    throw new Error("backtest() requires a non-empty candles array");
+    throw new Error(`backtest() requires a non-empty candles array, got ${describeValue(candles)}`);
   }
   if (typeof signal !== "function") {
-    throw new Error("backtest() requires a signal function");
+    throw new Error(`backtest() requires a signal function, got ${describeValue(signal)}`);
   }
   const closed = [];
   let currentEquity = equity;
@@ -1110,17 +1157,13 @@ function backtest(rawOptions) {
     });
     const size = roundStep2(rawSize, qtyStep);
     if (size < minQty) return false;
-    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(
-      entryPrice,
-      pending.side,
-      {
-        slippageBps,
-        feeBps,
-        kind: fillKind,
-        qty: size,
-        costs
-      }
-    );
+    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(entryPrice, pending.side, {
+      slippageBps,
+      feeBps,
+      kind: fillKind,
+      qty: size,
+      costs
+    });
     open = {
       symbol,
       ...pending.meta,
@@ -1171,10 +1214,7 @@ function backtest(rawOptions) {
       dayEquityStart = currentEquity;
     }
     if (open && open._maxBarsInTrade > 0) {
-      const barsHeld = Math.max(
-        1,
-        Math.round((bar.time - open.openTime) / estimatedBarMs)
-      );
+      const barsHeld = Math.max(1, Math.round((bar.time - open.openTime) / estimatedBarMs));
       if (barsHeld >= open._maxBarsInTrade) {
         forceExit("TIME", bar);
       }
@@ -1228,11 +1268,13 @@ function backtest(rawOptions) {
           const cutQty = roundStep2(open.size * volScale.cutFrac, qtyStep);
           if (cutQty >= minQty && cutQty < open.size) {
             const exitSide2 = open.side === "long" ? "short" : "long";
-            const { price: filled, feeTotal: exitFeeTotal } = applyFill(
-              bar.close,
-              exitSide2,
-              { slippageBps, feeBps, kind: "market", qty: cutQty, costs }
-            );
+            const { price: filled, feeTotal: exitFeeTotal } = applyFill(bar.close, exitSide2, {
+              slippageBps,
+              feeBps,
+              kind: "market",
+              qty: cutQty,
+              costs
+            });
             closeLeg({
               openPos: open,
               qty: cutQty,
@@ -1257,11 +1299,13 @@ function backtest(rawOptions) {
           const baseSize = open.baseSize || open.initSize;
           const addQty = roundStep2(baseSize * pyramiding.addFrac, qtyStep);
           if (addQty >= minQty) {
-            const { price: addFill, feeTotal: addFeeTotal } = applyFill(
-              triggerPrice,
-              open.side,
-              { slippageBps, feeBps, kind: "limit", qty: addQty, costs }
-            );
+            const { price: addFill, feeTotal: addFeeTotal } = applyFill(triggerPrice, open.side, {
+              slippageBps,
+              feeBps,
+              kind: "limit",
+              qty: addQty,
+              costs
+            });
             const newSize = open.size + addQty;
             open.entryFeeTotal += addFeeTotal;
             open.entryFill = (open.entryFill * open.size + addFill * addQty) / newSize;
@@ -1339,15 +1383,10 @@ function backtest(rawOptions) {
     if (!open && pending) {
       if (index > pending.expiresAt || dailyLossHit || dailyTradeCapHit) {
         if (entryChase.enabled && entryChase.convertOnExpiry) {
-          const riskAtEdge = Math.abs(
-            pending.meta._initRisk ?? pending.entry - pending.stop
-          );
+          const riskAtEdge = Math.abs(pending.meta._initRisk ?? pending.entry - pending.stop);
           const priceNow = bar.close;
           const direction = pending.side === "long" ? 1 : -1;
-          const slippedR = Math.max(
-            0,
-            direction === 1 ? priceNow - pending.entry : pending.entry - priceNow
-          ) / Math.max(1e-8, riskAtEdge);
+          const slippedR = Math.max(0, direction === 1 ? priceNow - pending.entry : pending.entry - priceNow) / Math.max(1e-8, riskAtEdge);
           if (slippedR > maxSlipROnFill) {
             pending = null;
           } else if (!openFromPending(bar, index, priceNow, "market")) {
@@ -1362,21 +1401,16 @@ function backtest(rawOptions) {
         }
       } else if (entryChase.enabled) {
         const elapsedBars = index - (pending.startedAtIndex ?? index);
-        const midpoint = pending.meta?._imb?.mid;
-        if (!pending._chasedCE && midpoint !== void 0 && elapsedBars >= Math.max(1, entryChase.afterBars)) {
+        const midpoint = asNumber(pending.meta?._imb?.mid);
+        if (!pending._chasedCE && midpoint !== null && elapsedBars >= Math.max(1, entryChase.afterBars)) {
           pending.entry = midpoint;
           pending._chasedCE = true;
         }
         if (pending._chasedCE) {
-          const riskRef = Math.abs(
-            pending.meta?._initRisk ?? pending.entry - pending.stop
-          );
+          const riskRef = Math.abs(pending.meta?._initRisk ?? pending.entry - pending.stop);
           const priceNow = bar.close;
           const direction = pending.side === "long" ? 1 : -1;
-          const slippedR = Math.max(
-            0,
-            direction === 1 ? priceNow - pending.entry : pending.entry - priceNow
-          ) / Math.max(1e-8, riskRef);
+          const slippedR = Math.max(0, direction === 1 ? priceNow - pending.entry : pending.entry - priceNow) / Math.max(1e-8, riskRef);
           if (slippedR > maxSlipROnFill) {
             pending = null;
           } else if (slippedR > 0 && slippedR <= entryChase.maxSlipR) {
@@ -1404,13 +1438,19 @@ function backtest(rawOptions) {
         );
       }
       const signalCandles = strict ? strictHistoryView(history, index) : history;
-      const rawSignal = signal({
-        candles: signalCandles,
+      const rawSignal = callSignalWithContext({
+        signal,
+        context: {
+          candles: signalCandles,
+          index,
+          bar,
+          equity: currentEquity,
+          openPosition: open,
+          pendingOrder: pending
+        },
         index,
         bar,
-        equity: currentEquity,
-        openPosition: open,
-        pendingOrder: pending
+        symbol
       });
       const nextSignal = normalizeSignal(rawSignal, bar, finalTP_R);
       if (nextSignal) {
@@ -1426,9 +1466,7 @@ function backtest(rawOptions) {
           expiresAt: index + Math.max(1, expiryBars),
           startedAtIndex: index,
           meta: nextSignal,
-          plannedRiskAbs: Math.abs(
-            nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop
-          )
+          plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop)
         };
         if (touchedLimit(pending.side, pending.entry, bar, trigger)) {
           if (!openFromPending(bar, index, pending.entry, "limit")) {
@@ -1448,12 +1486,15 @@ function backtest(rawOptions) {
     eqSeries
   });
   const positions = closed.filter((trade) => trade.exit.reason !== "SCALE");
+  const lastPrice = asNumber(candles[candles.length - 1]?.close);
+  const openPositions = open ? [snapshotOpenPosition(open, lastPrice ?? open.entryFill ?? open.entry)] : [];
   return {
     symbol: options.symbol,
     interval: options.interval,
     range: options.range,
     trades: closed,
     positions,
+    openPositions,
     metrics,
     eqSeries,
     replay: {
@@ -1466,7 +1507,6 @@ function backtest(rawOptions) {
 // src/data/yahoo.js
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var DAY_MS = 24 * 60 * 60 * 1e3;
-var DAY_SEC = 24 * 60 * 60;
 var requestQueue = {
   lastRequestAt: 0,
   minDelayMs: 400
@@ -1621,13 +1661,7 @@ async function fetchYahooChartWithRetry(symbol, params, period, maxRetries = 3) 
     }
   }
   throw new Error(
-    formatYahooFailureMessage(
-      symbol,
-      params.interval,
-      period,
-      lastError,
-      maxRetries
-    )
+    formatYahooFailureMessage(symbol, params.interval, period, lastError, maxRetries)
   );
 }
 async function fetchHistorical(symbol, interval = "5m", period = "60d", options = {}) {
@@ -1667,9 +1701,9 @@ async function fetchHistorical(symbol, interval = "5m", period = "60d", options 
       period
     );
     chunks.push(...candles);
-    chunkEndMs = chunkStartMs - 1e3;
     remainingMs -= takeMs;
-    if (chunks.length > 2e6) break;
+    chunkEndMs = chunkStartMs - 1e3;
+    if (chunkEndMs <= 0 || chunks.length > 2e6) break;
   }
   return sanitizeBars(chunks);
 }
@@ -1745,11 +1779,7 @@ async function getHistoricalCandles(options = {}) {
   }
   return candles;
 }
-async function backtestHistorical({
-  backtestOptions = {},
-  data,
-  ...legacy
-} = {}) {
+async function backtestHistorical({ backtestOptions = {}, data, ...legacy } = {}) {
   const candles = await getHistoricalCandles(data || legacy);
   return backtest({
     candles,

@@ -4,11 +4,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import {
-  exportHtmlReport,
-  exportMetricsJSON,
-  renderHtmlReport,
-} from "../src/index.js";
+import { exportHtmlReport, exportMetricsJSON, renderHtmlReport } from "../src/index.js";
 
 function sampleMetrics() {
   return {

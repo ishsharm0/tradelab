@@ -1,3 +1,4 @@
+"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -189,6 +190,14 @@ var pct = (a, b) => (a - b) / b;
 function roundStep(value, step) {
   return Math.floor(value / step) * step;
 }
+var warnedNonPositiveEquity = false;
+function warnNonPositiveEquity(equity) {
+  if (warnedNonPositiveEquity) return;
+  warnedNonPositiveEquity = true;
+  console.warn(
+    `[tradelab] calculatePositionSize() received non-positive equity (${equity}); returning size 0`
+  );
+}
 function calculatePositionSize({
   equity,
   entry,
@@ -198,6 +207,10 @@ function calculatePositionSize({
   minQty = 1e-3,
   maxLeverage = 2
 }) {
+  if (!Number.isFinite(equity) || equity <= 0) {
+    warnNonPositiveEquity(equity);
+    return 0;
+  }
   const riskPerUnit = Math.abs(entry - stop);
   if (!Number.isFinite(riskPerUnit) || riskPerUnit <= 0) return 0;
   const maxRiskDollars = Math.max(0, equity * riskFraction);
@@ -309,14 +322,14 @@ function percentile(values, percentileRank) {
   const index = Math.floor((sorted.length - 1) * percentileRank);
   return sorted[index];
 }
-function buildMetrics({
-  closed,
-  equityStart,
-  equityFinal,
-  candles,
-  estBarMs,
-  eqSeries
-}) {
+var PROFIT_FACTOR_CAP = 1e6;
+function finiteProfitFactor(grossProfit, grossLoss) {
+  if (grossLoss === 0) {
+    return grossProfit > 0 ? PROFIT_FACTOR_CAP : 0;
+  }
+  return grossProfit / grossLoss;
+}
+function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqSeries }) {
   const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
   const completedTrades = [];
   const tradeRs = [];
@@ -392,8 +405,8 @@ function buildMetrics({
   const tradeReturnStd = stddev(tradeReturns);
   const sharpePerTrade = tradeReturnStd === 0 ? tradeReturns.length ? Infinity : 0 : mean(tradeReturns) / tradeReturnStd;
   const sortinoPerTrade = sortino(tradeReturns);
-  const profitFactorPositions = grossLossPositions === 0 ? grossProfitPositions > 0 ? Infinity : 0 : grossProfitPositions / grossLossPositions;
-  const profitFactorLegs = grossLossLegs === 0 ? grossProfitLegs > 0 ? Infinity : 0 : grossProfitLegs / grossLossLegs;
+  const profitFactorPositions = finiteProfitFactor(grossProfitPositions, grossLossPositions);
+  const profitFactorLegs = finiteProfitFactor(grossProfitLegs, grossLossLegs);
   const returnPct = (equityFinal - equityStart) / Math.max(1e-12, equityStart);
   const calmar = maxDrawdown === 0 ? returnPct > 0 ? Infinity : 0 : returnPct / maxDrawdown;
   const totalBars = Math.max(1, candles.length);
@@ -562,7 +575,7 @@ function normalizeDateBoundary(value, fallback) {
 }
 function normalizeCandles(candles) {
   if (!Array.isArray(candles)) return [];
-  const normalized = candles.map((bar) => {
+  const parsed = candles.map((bar) => {
     try {
       const time = resolveDate(bar?.time ?? bar?.timestamp ?? bar?.date);
       const open = Number(bar?.open ?? bar?.o);
@@ -584,13 +597,28 @@ function normalizeCandles(candles) {
     } catch {
       return null;
     }
-  }).filter(Boolean).sort((left, right) => left.time - right.time);
+  }).filter(Boolean);
+  let reordered = false;
+  let duplicateCount = 0;
+  for (let index = 1; index < parsed.length; index += 1) {
+    const prev = parsed[index - 1].time;
+    const current = parsed[index].time;
+    if (current < prev) reordered = true;
+    if (current === prev) duplicateCount += 1;
+  }
+  const normalized = parsed.sort((left, right) => left.time - right.time);
   const deduped = [];
   let lastTime = null;
   for (const candle of normalized) {
     if (candle.time === lastTime) continue;
     deduped.push(candle);
     lastTime = candle.time;
+  }
+  const removedDuplicates = normalized.length - deduped.length;
+  if (reordered || removedDuplicates > 0 || duplicateCount > 0) {
+    console.warn(
+      `[tradelab] normalizeCandles() reordered or deduplicated candles (input=${candles.length}, valid=${parsed.length}, output=${deduped.length})`
+    );
   }
   return deduped;
 }
@@ -634,9 +662,7 @@ function loadCandlesFromCSV(filePath, options = {}) {
   const closeIdx = resolveColumn(closeCol, headerIndex, ["c", "adj close"]);
   const volumeIdx = resolveColumn(volumeCol, headerIndex, ["v", "vol", "quantity"]);
   if (timeIdx < 0 || openIdx < 0 || highIdx < 0 || lowIdx < 0 || closeIdx < 0) {
-    throw new Error(
-      `Could not resolve required CSV columns in ${import_path.default.basename(filePath)}`
-    );
+    throw new Error(`Could not resolve required CSV columns in ${import_path.default.basename(filePath)}`);
   }
   const minTime = normalizeDateBoundary(startDate, -Infinity);
   const maxTime = normalizeDateBoundary(endDate, Infinity);
@@ -751,18 +777,12 @@ function usDstBoundsUTC(year) {
     if (sundaysSeen === 2) break;
     marchCursor = new Date(marchCursor.getTime() + 24 * 60 * 60 * 1e3);
   }
-  const dstStart = new Date(
-    Date.UTC(year, 2, marchCursor.getUTCDate(), 7, 0, 0)
-  );
+  const dstStart = new Date(Date.UTC(year, 2, marchCursor.getUTCDate(), 7, 0, 0));
   let novemberCursor = new Date(Date.UTC(year, 10, 1, 6, 0, 0));
   while (novemberCursor.getUTCDay() !== 0) {
-    novemberCursor = new Date(
-      novemberCursor.getTime() + 24 * 60 * 60 * 1e3
-    );
+    novemberCursor = new Date(novemberCursor.getTime() + 24 * 60 * 60 * 1e3);
   }
-  const dstEnd = new Date(
-    Date.UTC(year, 10, novemberCursor.getUTCDate(), 6, 0, 0)
-  );
+  const dstEnd = new Date(Date.UTC(year, 10, novemberCursor.getUTCDate(), 6, 0, 0));
   return { dstStart, dstEnd };
 }
 function isUsEasternDST(timeMs) {
@@ -830,11 +850,7 @@ function applyFill(price, side, { slippageBps = 0, feeBps = 0, kind = "market", 
   const model = costs || {};
   const modelSlippageBps = Number.isFinite(model.slippageBps) ? model.slippageBps : slippageBps;
   const modelFeeBps = Number.isFinite(model.commissionBps) ? model.commissionBps : feeBps;
-  const effectiveSlippageBps = resolveSlippageBps(
-    kind,
-    modelSlippageBps,
-    model.slippageByKind
-  );
+  const effectiveSlippageBps = resolveSlippageBps(kind, modelSlippageBps, model.slippageByKind);
   const halfSpreadBps = Number.isFinite(model.spreadBps) ? model.spreadBps / 2 : 0;
   const slippage = (effectiveSlippageBps + halfSpreadBps) / 1e4 * price;
   const filledPrice = side === "long" ? price + slippage : price - slippage;
@@ -861,14 +877,7 @@ function touchedLimit(side, limitPrice, bar, mode = "intrabar") {
   }
   return side === "long" ? bar.low <= limitPrice : bar.high >= limitPrice;
 }
-function ocoExitCheck({
-  side,
-  stop,
-  tp,
-  bar,
-  mode = "intrabar",
-  tieBreak = "pessimistic"
-}) {
+function ocoExitCheck({ side, stop, tp, bar, mode = "intrabar", tieBreak = "pessimistic" }) {
   if (mode === "close") {
     const close = bar.close;
     if (side === "long") {
@@ -949,12 +958,50 @@ function strictHistoryView(candles, currentIndex) {
     get(target, property, receiver) {
       if (isArrayIndexKey(property) && Number(property) >= target.length) {
         throw new Error(
-          `strict mode: signal() tried to access candles[${property}] beyond current index ${currentIndex}`
+          `strict mode: signal() tried to access candles[${String(property)}] beyond current index ${currentIndex}`
         );
       }
       return Reflect.get(target, property, receiver);
     }
   });
+}
+function describeValue(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+function formatIsoTime(time) {
+  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
+}
+function callSignalWithContext({ signal, context, index, bar, symbol }) {
+  try {
+    return signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
+}
+function snapshotOpenPosition(open, markPrice) {
+  if (!open) return null;
+  const entryPrice = open.entryFill ?? open.entry;
+  const direction = open.side === "long" ? 1 : -1;
+  const unrealizedPnl = (markPrice - entryPrice) * direction * open.size;
+  return {
+    id: open.id,
+    symbol: open.symbol,
+    side: open.side,
+    size: open.size,
+    entry: open.entry,
+    entryFill: open.entryFill,
+    stop: open.stop,
+    takeProfit: open.takeProfit,
+    openTime: open.openTime,
+    markPrice,
+    unrealizedPnl,
+    _initRisk: open._initRisk
+  };
 }
 function mergeOptions(options) {
   const normalizedRiskPct = Number.isFinite(options.riskFraction) ? options.riskFraction * 100 : options.riskPct;
@@ -1097,10 +1144,10 @@ function backtest(rawOptions) {
     strict
   } = options;
   if (!Array.isArray(candles) || candles.length === 0) {
-    throw new Error("backtest() requires a non-empty candles array");
+    throw new Error(`backtest() requires a non-empty candles array, got ${describeValue(candles)}`);
   }
   if (typeof signal !== "function") {
-    throw new Error("backtest() requires a signal function");
+    throw new Error(`backtest() requires a signal function, got ${describeValue(signal)}`);
   }
   const closed = [];
   let currentEquity = equity;
@@ -1249,17 +1296,13 @@ function backtest(rawOptions) {
     });
     const size = roundStep2(rawSize, qtyStep);
     if (size < minQty) return false;
-    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(
-      entryPrice,
-      pending.side,
-      {
-        slippageBps,
-        feeBps,
-        kind: fillKind,
-        qty: size,
-        costs
-      }
-    );
+    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(entryPrice, pending.side, {
+      slippageBps,
+      feeBps,
+      kind: fillKind,
+      qty: size,
+      costs
+    });
     open = {
       symbol,
       ...pending.meta,
@@ -1310,10 +1353,7 @@ function backtest(rawOptions) {
       dayEquityStart = currentEquity;
     }
     if (open && open._maxBarsInTrade > 0) {
-      const barsHeld = Math.max(
-        1,
-        Math.round((bar.time - open.openTime) / estimatedBarMs)
-      );
+      const barsHeld = Math.max(1, Math.round((bar.time - open.openTime) / estimatedBarMs));
       if (barsHeld >= open._maxBarsInTrade) {
         forceExit("TIME", bar);
       }
@@ -1367,11 +1407,13 @@ function backtest(rawOptions) {
           const cutQty = roundStep2(open.size * volScale.cutFrac, qtyStep);
           if (cutQty >= minQty && cutQty < open.size) {
             const exitSide2 = open.side === "long" ? "short" : "long";
-            const { price: filled, feeTotal: exitFeeTotal } = applyFill(
-              bar.close,
-              exitSide2,
-              { slippageBps, feeBps, kind: "market", qty: cutQty, costs }
-            );
+            const { price: filled, feeTotal: exitFeeTotal } = applyFill(bar.close, exitSide2, {
+              slippageBps,
+              feeBps,
+              kind: "market",
+              qty: cutQty,
+              costs
+            });
             closeLeg({
               openPos: open,
               qty: cutQty,
@@ -1396,11 +1438,13 @@ function backtest(rawOptions) {
           const baseSize = open.baseSize || open.initSize;
           const addQty = roundStep2(baseSize * pyramiding.addFrac, qtyStep);
           if (addQty >= minQty) {
-            const { price: addFill, feeTotal: addFeeTotal } = applyFill(
-              triggerPrice,
-              open.side,
-              { slippageBps, feeBps, kind: "limit", qty: addQty, costs }
-            );
+            const { price: addFill, feeTotal: addFeeTotal } = applyFill(triggerPrice, open.side, {
+              slippageBps,
+              feeBps,
+              kind: "limit",
+              qty: addQty,
+              costs
+            });
             const newSize = open.size + addQty;
             open.entryFeeTotal += addFeeTotal;
             open.entryFill = (open.entryFill * open.size + addFill * addQty) / newSize;
@@ -1478,15 +1522,10 @@ function backtest(rawOptions) {
     if (!open && pending) {
       if (index > pending.expiresAt || dailyLossHit || dailyTradeCapHit) {
         if (entryChase.enabled && entryChase.convertOnExpiry) {
-          const riskAtEdge = Math.abs(
-            pending.meta._initRisk ?? pending.entry - pending.stop
-          );
+          const riskAtEdge = Math.abs(pending.meta._initRisk ?? pending.entry - pending.stop);
           const priceNow = bar.close;
           const direction = pending.side === "long" ? 1 : -1;
-          const slippedR = Math.max(
-            0,
-            direction === 1 ? priceNow - pending.entry : pending.entry - priceNow
-          ) / Math.max(1e-8, riskAtEdge);
+          const slippedR = Math.max(0, direction === 1 ? priceNow - pending.entry : pending.entry - priceNow) / Math.max(1e-8, riskAtEdge);
           if (slippedR > maxSlipROnFill) {
             pending = null;
           } else if (!openFromPending(bar, index, priceNow, "market")) {
@@ -1501,21 +1540,16 @@ function backtest(rawOptions) {
         }
       } else if (entryChase.enabled) {
         const elapsedBars = index - (pending.startedAtIndex ?? index);
-        const midpoint = pending.meta?._imb?.mid;
-        if (!pending._chasedCE && midpoint !== void 0 && elapsedBars >= Math.max(1, entryChase.afterBars)) {
+        const midpoint = asNumber(pending.meta?._imb?.mid);
+        if (!pending._chasedCE && midpoint !== null && elapsedBars >= Math.max(1, entryChase.afterBars)) {
           pending.entry = midpoint;
           pending._chasedCE = true;
         }
         if (pending._chasedCE) {
-          const riskRef = Math.abs(
-            pending.meta?._initRisk ?? pending.entry - pending.stop
-          );
+          const riskRef = Math.abs(pending.meta?._initRisk ?? pending.entry - pending.stop);
           const priceNow = bar.close;
           const direction = pending.side === "long" ? 1 : -1;
-          const slippedR = Math.max(
-            0,
-            direction === 1 ? priceNow - pending.entry : pending.entry - priceNow
-          ) / Math.max(1e-8, riskRef);
+          const slippedR = Math.max(0, direction === 1 ? priceNow - pending.entry : pending.entry - priceNow) / Math.max(1e-8, riskRef);
           if (slippedR > maxSlipROnFill) {
             pending = null;
           } else if (slippedR > 0 && slippedR <= entryChase.maxSlipR) {
@@ -1543,13 +1577,19 @@ function backtest(rawOptions) {
         );
       }
       const signalCandles = strict ? strictHistoryView(history, index) : history;
-      const rawSignal = signal({
-        candles: signalCandles,
+      const rawSignal = callSignalWithContext({
+        signal,
+        context: {
+          candles: signalCandles,
+          index,
+          bar,
+          equity: currentEquity,
+          openPosition: open,
+          pendingOrder: pending
+        },
         index,
         bar,
-        equity: currentEquity,
-        openPosition: open,
-        pendingOrder: pending
+        symbol
       });
       const nextSignal = normalizeSignal(rawSignal, bar, finalTP_R);
       if (nextSignal) {
@@ -1565,9 +1605,7 @@ function backtest(rawOptions) {
           expiresAt: index + Math.max(1, expiryBars),
           startedAtIndex: index,
           meta: nextSignal,
-          plannedRiskAbs: Math.abs(
-            nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop
-          )
+          plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop)
         };
         if (touchedLimit(pending.side, pending.entry, bar, trigger)) {
           if (!openFromPending(bar, index, pending.entry, "limit")) {
@@ -1587,12 +1625,15 @@ function backtest(rawOptions) {
     eqSeries
   });
   const positions = closed.filter((trade) => trade.exit.reason !== "SCALE");
+  const lastPrice = asNumber(candles[candles.length - 1]?.close);
+  const openPositions = open ? [snapshotOpenPosition(open, lastPrice ?? open.entryFill ?? open.entry)] : [];
   return {
     symbol: options.symbol,
     interval: options.interval,
     range: options.range,
     trades: closed,
     positions,
+    openPositions,
     metrics,
     eqSeries,
     replay: {
@@ -1606,6 +1647,24 @@ function backtest(rawOptions) {
 function asNumber2(value) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
+}
+function describeValue2(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+function formatIsoTime2(time) {
+  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
+}
+function callSignalWithContext2({ signal, context, index, bar, symbol }) {
+  try {
+    return signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime2(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
 }
 function normalizeSide2(value) {
   if (value === "long" || value === "buy") return "long";
@@ -1666,16 +1725,36 @@ function normalizeSignal2(signal, bar, fallbackR) {
 function equityPoint2(time, equity) {
   return { time, timestamp: time, equity };
 }
+function xmur3(seed) {
+  let hash = 1779033703 ^ seed.length;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = Math.imul(hash ^ seed.charCodeAt(index), 3432918353);
+    hash = hash << 13 | hash >>> 19;
+  }
+  return () => {
+    hash = Math.imul(hash ^ hash >>> 16, 2246822507);
+    hash = Math.imul(hash ^ hash >>> 13, 3266489909);
+    return (hash ^= hash >>> 16) >>> 0;
+  };
+}
+function mulberry32(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = state + 1831565813 >>> 0;
+    let value = Math.imul(state ^ state >>> 15, state | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
+function seededUnitInterval(seedParts) {
+  const seed = seedParts.map((part) => String(part)).join("|");
+  const seedFn = xmur3(seed);
+  return mulberry32(seedFn())();
+}
 function deterministicFill(probability, seedParts) {
   if (probability >= 1) return true;
   if (probability <= 0) return false;
-  let hash = 2166136261;
-  const seed = seedParts.join("|");
-  for (let index = 0; index < seed.length; index += 1) {
-    hash ^= seed.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  const normalized = (hash >>> 0) / 4294967295;
+  const normalized = seededUnitInterval(seedParts);
   return normalized <= probability;
 }
 function backtestTicks({
@@ -1701,14 +1780,18 @@ function backtestTicks({
   oco = {}
 } = {}) {
   if (!Array.isArray(ticks) || ticks.length === 0) {
-    throw new Error("backtestTicks() requires a non-empty ticks array");
+    throw new Error(
+      `backtestTicks() requires a non-empty ticks array, got ${describeValue2(ticks)}`
+    );
   }
   if (typeof signal !== "function") {
-    throw new Error("backtestTicks() requires a signal function");
+    throw new Error(`backtestTicks() requires a signal function, got ${describeValue2(signal)}`);
   }
   const normalizedTicks = ticks.map(normalizeTick).filter(Boolean);
   if (!normalizedTicks.length) {
-    throw new Error("backtestTicks() could not normalize any ticks");
+    throw new Error(
+      `backtestTicks() could not normalize any ticks from ${ticks.length} input rows`
+    );
   }
   const ocoOptions = {
     mode: "intrabar",
@@ -1917,13 +2000,19 @@ function backtestTicks({
     const dailyTradeCapHit = dailyMaxTrades > 0 && dayTrades >= dailyMaxTrades;
     if (!open && !pending && !dailyLossHit && !dailyTradeCapHit) {
       const nextSignal = normalizeSignal2(
-        signal({
-          candles: history,
+        callSignalWithContext2({
+          signal,
+          context: {
+            candles: history,
+            index,
+            bar: tick,
+            equity: markedEquity(tick),
+            openPosition: open,
+            pendingOrder: pending
+          },
           index,
           bar: tick,
-          equity: markedEquity(tick),
-          openPosition: open,
-          pendingOrder: pending
+          symbol
         }),
         tick,
         finalTP_R
@@ -1963,6 +2052,7 @@ function backtestTicks({
     range,
     trades,
     positions,
+    openPositions: [],
     metrics,
     eqSeries,
     replay: {
@@ -1990,12 +2080,50 @@ function strictHistoryView2(candles, currentIndex) {
     get(target, property, receiver) {
       if (isArrayIndexKey2(property) && Number(property) >= target.length) {
         throw new Error(
-          `strict mode: signal() tried to access candles[${property}] beyond current index ${currentIndex}`
+          `strict mode: signal() tried to access candles[${String(property)}] beyond current index ${currentIndex}`
         );
       }
       return Reflect.get(target, property, receiver);
     }
   });
+}
+function describeValue3(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+function formatIsoTime3(time) {
+  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
+}
+function callSignalWithContext3({ signal, context, index, bar, symbol }) {
+  try {
+    return signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime3(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
+}
+function snapshotOpenPosition2(open, markPrice) {
+  if (!open) return null;
+  const entryPrice = open.entryFill ?? open.entry;
+  const direction = open.side === "long" ? 1 : -1;
+  const unrealizedPnl = (markPrice - entryPrice) * direction * open.size;
+  return {
+    id: open.id,
+    symbol: open.symbol,
+    side: open.side,
+    size: open.size,
+    entry: open.entry,
+    entryFill: open.entryFill,
+    stop: open.stop,
+    takeProfit: open.takeProfit,
+    openTime: open.openTime,
+    markPrice,
+    unrealizedPnl,
+    _initRisk: open._initRisk
+  };
 }
 function normalizeSide3(value) {
   if (value === "long" || value === "buy") return "long";
@@ -2110,10 +2238,18 @@ var BarSystemRunner = class {
     this.options = mergeOptions2(rawOptions);
     const { candles, signal } = this.options;
     if (!Array.isArray(candles) || candles.length === 0) {
-      throw new Error("backtestPortfolio() requires each system to include non-empty candles");
+      throw new Error(
+        `backtestPortfolio() requires each system to include non-empty candles, got ${describeValue3(
+          candles
+        )} for ${this.options.symbol}`
+      );
     }
     if (typeof signal !== "function") {
-      throw new Error("backtestPortfolio() requires each system to include a signal function");
+      throw new Error(
+        `backtestPortfolio() requires each system to include a signal function, got ${describeValue3(
+          signal
+        )} for ${this.options.symbol}`
+      );
     }
     this.symbol = this.options.symbol;
     this.candles = candles;
@@ -2149,7 +2285,11 @@ var BarSystemRunner = class {
   }
   getLockedCapital() {
     if (!this.open) return 0;
-    return capitalForSize(this.open.entryFill ?? this.open.entry, this.open.size, this.options.maxLeverage);
+    return capitalForSize(
+      this.open.entryFill ?? this.open.entry,
+      this.open.size,
+      this.options.maxLeverage
+    );
   }
   getMarkPrice() {
     return this.lastBar?.close ?? null;
@@ -2297,17 +2437,13 @@ var BarSystemRunner = class {
     }) : desiredSize;
     const size = roundStep2(approvedSize, this.options.qtyStep);
     if (size < this.options.minQty) return false;
-    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(
-      entryPrice,
-      this.pending.side,
-      {
-        slippageBps: this.options.slippageBps,
-        feeBps: this.options.feeBps,
-        kind: fillKind,
-        qty: size,
-        costs: this.options.costs
-      }
-    );
+    const { price: entryFill, feeTotal: entryFeeTotal } = applyFill(entryPrice, this.pending.side, {
+      slippageBps: this.options.slippageBps,
+      feeBps: this.options.feeBps,
+      kind: fillKind,
+      qty: size,
+      costs: this.options.costs
+    });
     this.open = {
       symbol: this.symbol,
       ...this.pending.meta,
@@ -2413,10 +2549,7 @@ var BarSystemRunner = class {
         this.open.stop = this.options.oco.clampStops ? clampStop(bar.close, tightened, this.open.side, this.options.oco) : tightened;
       }
       if (this.options.mfeTrail.enabled && this.open._mfeR >= this.options.mfeTrail.armR) {
-        const targetR = Math.max(
-          0,
-          this.open._mfeR - Math.max(0, this.options.mfeTrail.givebackR)
-        );
+        const targetR = Math.max(0, this.open._mfeR - Math.max(0, this.options.mfeTrail.givebackR));
         const candidate = this.open.side === "long" ? this.open.entry + targetR * risk : this.open.entry - targetR * risk;
         const tightened = this.open.side === "long" ? Math.max(this.open.stop, candidate) : Math.min(this.open.stop, candidate);
         this.open.stop = this.options.oco.clampStops ? clampStop(bar.close, tightened, this.open.side, this.options.oco) : tightened;
@@ -2431,7 +2564,10 @@ var BarSystemRunner = class {
         const ratio = this.atrValues[this.index] / Math.max(1e-12, this.open.entryATR);
         const shouldCut = ratio >= this.options.volScale.cutIfAtrX && markR < this.options.volScale.noCutAboveR && !this.open._volCutDone;
         if (shouldCut) {
-          const cutQty = roundStep2(this.open.size * this.options.volScale.cutFrac, this.options.qtyStep);
+          const cutQty = roundStep2(
+            this.open.size * this.options.volScale.cutFrac,
+            this.options.qtyStep
+          );
           if (cutQty >= this.options.minQty && cutQty < this.open.size) {
             const exitSide2 = this.open.side === "long" ? "short" : "long";
             const { price: filled, feeTotal: exitFeeTotal } = applyFill(bar.close, exitSide2, {
@@ -2463,7 +2599,10 @@ var BarSystemRunner = class {
         const touched = this.open.side === "long" ? trigger === "intrabar" ? bar.high >= triggerPrice : bar.close >= triggerPrice : trigger === "intrabar" ? bar.low <= triggerPrice : bar.close <= triggerPrice;
         if (breakEvenSatisfied && touched) {
           const baseSize = this.open.baseSize || this.open.initSize;
-          const requestedQty = roundStep2(baseSize * this.options.pyramiding.addFrac, this.options.qtyStep);
+          const requestedQty = roundStep2(
+            baseSize * this.options.pyramiding.addFrac,
+            this.options.qtyStep
+          );
           const addQty = typeof resolveEntrySize === "function" ? roundStep2(
             resolveEntrySize({
               runner: this,
@@ -2480,13 +2619,17 @@ var BarSystemRunner = class {
             this.options.qtyStep
           ) : requestedQty;
           if (addQty >= this.options.minQty) {
-            const { price: addFill, feeTotal: addFeeTotal } = applyFill(triggerPrice, this.open.side, {
-              slippageBps: this.options.slippageBps,
-              feeBps: this.options.feeBps,
-              kind: "limit",
-              qty: addQty,
-              costs: this.options.costs
-            });
+            const { price: addFill, feeTotal: addFeeTotal } = applyFill(
+              triggerPrice,
+              this.open.side,
+              {
+                slippageBps: this.options.slippageBps,
+                feeBps: this.options.feeBps,
+                kind: "limit",
+                qty: addQty,
+                costs: this.options.costs
+              }
+            );
             const newSize = this.open.size + addQty;
             this.open.entryFeeTotal += addFeeTotal;
             this.open.entryFill = (this.open.entryFill * this.open.size + addFill * addQty) / newSize;
@@ -2589,8 +2732,8 @@ var BarSystemRunner = class {
         }
       } else if (this.options.entryChase.enabled) {
         const elapsedBars = this.index - (this.pending.startedAtIndex ?? this.index);
-        const midpoint = this.pending.meta?._imb?.mid;
-        if (!this.pending._chasedCE && midpoint !== void 0 && elapsedBars >= Math.max(1, this.options.entryChase.afterBars)) {
+        const midpoint = asNumber3(this.pending.meta?._imb?.mid);
+        if (!this.pending._chasedCE && midpoint !== null && elapsedBars >= Math.max(1, this.options.entryChase.afterBars)) {
           this.pending.entry = midpoint;
           this.pending._chasedCE = true;
         }
@@ -2627,7 +2770,13 @@ var BarSystemRunner = class {
       return bar;
     }
     if (!this.pending) {
-      const rawSignal = this.options.signal(this.buildSignalContext(this.index, bar, signalEquity));
+      const rawSignal = callSignalWithContext3({
+        signal: this.options.signal,
+        context: this.buildSignalContext(this.index, bar, signalEquity),
+        index: this.index,
+        bar,
+        symbol: this.symbol
+      });
       const nextSignal = normalizeSignal3(rawSignal, bar, this.options.finalTP_R);
       if (nextSignal) {
         const signalRiskFraction = Number.isFinite(nextSignal.riskFraction) ? nextSignal.riskFraction : Number.isFinite(nextSignal.riskPct) ? nextSignal.riskPct / 100 : this.options.riskPct / 100;
@@ -2642,9 +2791,7 @@ var BarSystemRunner = class {
           expiresAt: this.index + Math.max(1, expiryBars),
           startedAtIndex: this.index,
           meta: nextSignal,
-          plannedRiskAbs: Math.abs(
-            nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop
-          )
+          plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop)
         };
         if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
           if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
@@ -2667,12 +2814,15 @@ var BarSystemRunner = class {
       eqSeries: this.eqSeries
     });
     const positions = this.closed.filter((trade) => trade.exit.reason !== "SCALE");
+    const lastPrice = asNumber3(this.candles[this.candles.length - 1]?.close);
+    const openPositions = this.open ? [snapshotOpenPosition2(this.open, lastPrice ?? this.open.entryFill ?? this.open.entry)] : [];
     return {
       symbol: this.options.symbol,
       interval: this.options.interval,
       range: this.options.range,
       trades: this.closed,
       positions,
+      openPositions,
       metrics,
       eqSeries: this.eqSeries,
       replay: {
@@ -2696,6 +2846,11 @@ function defaultSystemCap(totalEquity, capPct, maxAllocation, maxAllocationPct) 
 function asWeight(value) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
+function describeValue4(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
 function buildPortfolioPoint(time, equity, lockedCapital, availableCapital) {
   return {
     time,
@@ -2707,6 +2862,24 @@ function buildPortfolioPoint(time, equity, lockedCapital, availableCapital) {
 }
 function stableSystemOrder(left, right) {
   return left.index - right.index;
+}
+function hashedOrderScore(index, time, seed) {
+  let value = (Number(time) ^ Math.imul(index + 1, 2654435761) ^ (seed | 0)) >>> 0;
+  value = Math.imul(value ^ value >>> 16, 2246822507) >>> 0;
+  value = Math.imul(value ^ value >>> 13, 3266489909) >>> 0;
+  return (value ^ value >>> 16) >>> 0;
+}
+function orderActiveSystems(active, nextTime, processingOrder, shuffleSeed) {
+  if (processingOrder !== "shuffle") {
+    active.sort(stableSystemOrder);
+    return;
+  }
+  active.sort((left, right) => {
+    const leftScore = hashedOrderScore(left.index, nextTime, shuffleSeed);
+    const rightScore = hashedOrderScore(right.index, nextTime, shuffleSeed);
+    if (leftScore !== rightScore) return leftScore - rightScore;
+    return stableSystemOrder(left, right);
+  });
 }
 function combineReplay(systemResults, eqSeries, collectReplay) {
   if (!collectReplay) {
@@ -2789,15 +2962,26 @@ function backtestPortfolio({
   allocation = "equal",
   collectEqSeries = true,
   collectReplay = false,
-  maxDailyLossPct = 0
+  maxDailyLossPct = 0,
+  processingOrder = "sequential",
+  shuffleSeed = 0
 } = {}) {
   if (!Array.isArray(systems) || systems.length === 0) {
-    throw new Error("backtestPortfolio() requires a non-empty systems array");
+    throw new Error(
+      `backtestPortfolio() requires a non-empty systems array, got ${describeValue4(systems)}`
+    );
+  }
+  if (processingOrder !== "sequential" && processingOrder !== "shuffle") {
+    throw new Error(
+      `backtestPortfolio() processingOrder must be "sequential" or "shuffle", got ${processingOrder}`
+    );
   }
   const weights = allocation === "equal" ? systems.map(() => 1) : systems.map((system) => asWeight(system.weight || 0));
   const totalWeight = weights.reduce((sumValue, weight) => sumValue + weight, 0);
   if (!(totalWeight > 0)) {
-    throw new Error("backtestPortfolio() requires positive allocation weights");
+    throw new Error(
+      `backtestPortfolio() requires positive allocation weights, got allocation=${allocation}`
+    );
   }
   const runners = systems.map((system, index) => {
     const defaultCapPct = weights[index] / totalWeight;
@@ -2835,7 +3019,7 @@ function backtestPortfolio({
   while (true) {
     const { nextTime, active } = findNextTimeAndActive(runners);
     if (!Number.isFinite(nextTime)) break;
-    active.sort(stableSystemOrder);
+    orderActiveSystems(active, nextTime, processingOrder, shuffleSeed);
     const dayKey = dayKeyET(nextTime);
     if (currentDay === null || dayKey !== currentDay) {
       currentDay = dayKey;
@@ -2899,6 +3083,12 @@ function backtestPortfolio({
       symbol: trade.symbol || run.symbol
     }))
   ).sort((left, right) => left.exit.time - right.exit.time);
+  const openPositions = systemResults.flatMap(
+    (run) => (run.result.openPositions || []).map((position) => ({
+      ...position,
+      symbol: position.symbol || run.symbol
+    }))
+  );
   const replay = combineReplay(systemResults, eqSeries, collectReplay);
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
@@ -2916,6 +3106,7 @@ function backtestPortfolio({
     range: void 0,
     trades,
     positions,
+    openPositions,
     metrics,
     eqSeries,
     replay,
@@ -2939,10 +3130,13 @@ function stitchEquitySeries(target, source) {
   target.push(...nextPoints);
 }
 function canonicalParams(params) {
-  const entries = Object.entries(params || {}).sort(
-    ([left], [right]) => left.localeCompare(right)
-  );
+  const entries = Object.entries(params || {}).sort(([left], [right]) => left.localeCompare(right));
   return JSON.stringify(Object.fromEntries(entries));
+}
+function describeValue5(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
 }
 function buildWindowRanges(length, trainBars, testBars, stepBars, mode) {
   const ranges = [];
@@ -3002,13 +3196,19 @@ function walkForwardOptimize({
   backtestOptions = {}
 } = {}) {
   if (!Array.isArray(candles) || candles.length === 0) {
-    throw new Error("walkForwardOptimize() requires a non-empty candles array");
+    throw new Error(
+      `walkForwardOptimize() requires a non-empty candles array, got ${describeValue5(candles)}`
+    );
   }
   if (typeof signalFactory !== "function") {
-    throw new Error("walkForwardOptimize() requires a signalFactory function");
+    throw new Error(
+      `walkForwardOptimize() requires a signalFactory function, got ${describeValue5(signalFactory)}`
+    );
   }
   if (!Array.isArray(parameterSets) || parameterSets.length === 0) {
-    throw new Error("walkForwardOptimize() requires parameterSets");
+    throw new Error(
+      `walkForwardOptimize() requires parameterSets, got ${describeValue5(parameterSets)}`
+    );
   }
   if (!(trainBars > 0) || !(testBars > 0) || !(stepBars > 0)) {
     throw new Error("walkForwardOptimize() requires positive trainBars, testBars, and stepBars");
@@ -3022,6 +3222,12 @@ function walkForwardOptimize({
   const eqSeries = [];
   let rollingEquity = backtestOptions.equity ?? 1e4;
   const ranges = buildWindowRanges(candles.length, trainBars, testBars, stepBars, mode);
+  if (!ranges.length) {
+    const required = trainBars + testBars;
+    throw new Error(
+      `walkForwardOptimize() produced zero windows: need at least ${required} candles (trainBars=${trainBars} + testBars=${testBars}) but got ${candles.length}. Try reducing trainBars/testBars or adding more historical data.`
+    );
+  }
   const trainBacktestOptions = {
     ...backtestOptions,
     collectEqSeries: false,
@@ -3031,6 +3237,13 @@ function walkForwardOptimize({
   for (const range of ranges) {
     const trainSlice = candles.slice(range.trainStart, range.trainEnd);
     const testSlice = candles.slice(range.testStart, range.testEnd);
+    if (!trainSlice.length || !testSlice.length) {
+      throw new Error(
+        `walkForwardOptimize() generated an empty window (train=${trainSlice.length}, test=${testSlice.length}, range=${JSON.stringify(
+          range
+        )})`
+      );
+    }
     let best = null;
     for (const params of parameterSets) {
       const trainResult = backtest({
@@ -3100,10 +3313,14 @@ function walkForwardOptimize({
     windows,
     trades: allTrades,
     positions: allPositions,
+    openPositions: [],
     metrics,
     eqSeries,
     replay: { frames: [], events: [] },
-    bestParams: Object.assign(windows.map((window) => window.bestParams), bestParamsSummary),
+    bestParams: Object.assign(
+      windows.map((window) => window.bestParams),
+      bestParamsSummary
+    ),
     bestParamsSummary: bestParamsSummary.stability
   };
 }
@@ -3114,7 +3331,6 @@ var import_path2 = __toESM(require("path"), 1);
 // src/data/yahoo.js
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 var DAY_MS = 24 * 60 * 60 * 1e3;
-var DAY_SEC = 24 * 60 * 60;
 var requestQueue = {
   lastRequestAt: 0,
   minDelayMs: 400
@@ -3269,13 +3485,7 @@ async function fetchYahooChartWithRetry(symbol, params, period, maxRetries = 3) 
     }
   }
   throw new Error(
-    formatYahooFailureMessage(
-      symbol,
-      params.interval,
-      period,
-      lastError,
-      maxRetries
-    )
+    formatYahooFailureMessage(symbol, params.interval, period, lastError, maxRetries)
   );
 }
 async function fetchHistorical(symbol, interval = "5m", period = "60d", options = {}) {
@@ -3315,9 +3525,9 @@ async function fetchHistorical(symbol, interval = "5m", period = "60d", options 
       period
     );
     chunks.push(...candles);
-    chunkEndMs = chunkStartMs - 1e3;
     remainingMs -= takeMs;
-    if (chunks.length > 2e6) break;
+    chunkEndMs = chunkStartMs - 1e3;
+    if (chunkEndMs <= 0 || chunks.length > 2e6) break;
   }
   return sanitizeBars(chunks);
 }
@@ -3393,11 +3603,7 @@ async function getHistoricalCandles(options = {}) {
   }
   return candles;
 }
-async function backtestHistorical({
-  backtestOptions = {},
-  data,
-  ...legacy
-} = {}) {
+async function backtestHistorical({ backtestOptions = {}, data, ...legacy } = {}) {
   const candles = await getHistoricalCandles(data || legacy);
   return backtest({
     candles,
@@ -3425,7 +3631,8 @@ function candidateRoots() {
   return [...new Set(roots)];
 }
 function readTemplate(relativePath) {
-  for (const root of candidateRoots()) {
+  const roots = candidateRoots();
+  for (const root of roots) {
     const absolutePath = import_path3.default.join(root, relativePath);
     if (!import_fs2.default.existsSync(absolutePath)) continue;
     if (!templateCache.has(absolutePath)) {
@@ -3433,7 +3640,9 @@ function readTemplate(relativePath) {
     }
     return templateCache.get(absolutePath);
   }
-  throw new Error(`Could not locate template asset: ${relativePath}`);
+  throw new Error(
+    `Could not locate template asset: ${relativePath} (searched ${roots.length} roots starting from ${roots[0]})`
+  );
 }
 function fmt(value, digits = 2) {
   if (value === void 0 || value === null || Number.isNaN(value)) return "\u2014";
@@ -3514,9 +3723,7 @@ function renderPositionRows(positions) {
           <td>${escapeHtml(fmt(exit.price, 4))}</td>
           <td>${escapeHtml(exit.reason ?? "\u2014")}</td>
           <td>${escapeHtml(fmt(exit.pnl, 2))}</td>
-          <td>${escapeHtml(fmt(trade.mfeR ?? 0, 2))} / ${escapeHtml(
-      fmt(trade.maeR ?? 0, 2)
-    )}</td>
+          <td>${escapeHtml(fmt(trade.mfeR ?? 0, 2))} / ${escapeHtml(fmt(trade.maeR ?? 0, 2))}</td>
         </tr>
       `;
   }).join("");
@@ -3621,10 +3828,7 @@ function renderHtmlReport({
     ["R p50 / p90", `${fmt(metrics.rDist?.p50 ?? 0, 2)} / ${fmt(metrics.rDist?.p90 ?? 0, 2)}`],
     [
       "Hold p50 / p90",
-      `${fmt(metrics.holdDistMin?.p50 ?? 0, 1)} / ${fmt(
-        metrics.holdDistMin?.p90 ?? 0,
-        1
-      )} min`
+      `${fmt(metrics.holdDistMin?.p50 ?? 0, 1)} / ${fmt(metrics.holdDistMin?.p90 ?? 0, 1)} min`
     ]
   ]);
   return renderTemplate(template, {
@@ -3665,10 +3869,7 @@ function exportHtmlReport({
   const safeSymbol = String(symbol).replace(/[^a-zA-Z0-9_.-]+/g, "_");
   const safeInterval = String(interval).replace(/[^a-zA-Z0-9_.-]+/g, "_");
   const safeRange = String(range).replace(/[^a-zA-Z0-9_.-]+/g, "_");
-  const outputPath = import_path3.default.join(
-    outDir,
-    `report-${safeSymbol}-${safeInterval}-${safeRange}.html`
-  );
+  const outputPath = import_path3.default.join(outDir, `report-${safeSymbol}-${safeInterval}-${safeRange}.html`);
   const html = renderHtmlReport({
     symbol,
     interval,

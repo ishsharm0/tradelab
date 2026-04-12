@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from "node:fs";
 import path from "path";
 import { pathToFileURL } from "url";
 
@@ -13,6 +14,16 @@ import {
   saveCandlesToCache,
   walkForwardOptimize,
 } from "../src/index.js";
+import {
+  AlpacaBroker,
+  BinanceBroker,
+  CoinbaseBroker,
+  InteractiveBrokersBroker,
+  JsonFileStorage,
+  LiveEngine,
+  LiveOrchestrator,
+  PaperEngine,
+} from "../src/live/index.js";
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -24,12 +35,15 @@ function parseArgs(argv) {
     }
 
     const key = token.slice(2);
+    const camelKey = key.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
     const next = argv[index + 1];
+    const value = next && !next.startsWith("--") ? next : true;
+    args[key] = value;
+    if (camelKey !== key && args[camelKey] === undefined) {
+      args[camelKey] = value;
+    }
     if (next && !next.startsWith("--")) {
-      args[key] = next;
       index += 1;
-    } else {
-      args[key] = true;
     }
   }
   return args;
@@ -50,15 +64,71 @@ function toList(value, fallback) {
 
 function parseJsonValue(value, fallback = null) {
   if (!value) return fallback;
-  return JSON.parse(String(value));
+  try {
+    return JSON.parse(String(value));
+  } catch {
+    throw new Error(`Invalid JSON value: ${String(value).slice(0, 120)}`);
+  }
 }
 
-function createEmaCrossSignal({
-  fast = 10,
-  slow = 30,
-  rr = 2,
-  stopLookback = 15,
-} = {}) {
+function toBoolean(value, fallback = false) {
+  if (value === undefined || value === null) return fallback;
+  if (value === true || value === false) return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function loadJsonFile(filePath) {
+  const resolved = path.resolve(process.cwd(), filePath);
+  const raw = fs.readFileSync(resolved, "utf8");
+  return JSON.parse(raw);
+}
+
+function resolveBrokerName(name, paperMode = false) {
+  if (paperMode) return "paper";
+  return String(name || "paper").toLowerCase();
+}
+
+function createBrokerAdapter(args, overrides = {}) {
+  const brokerName = resolveBrokerName(
+    overrides.broker || args.broker,
+    toBoolean(overrides.paper ?? args.paper, false)
+  );
+
+  if (brokerName === "paper") {
+    return new PaperEngine({
+      equity: toNumber(overrides.equity ?? args.equity, 10_000),
+      slippageBps: toNumber(overrides.slippageBps ?? args.slippageBps, 0),
+      feeBps: toNumber(overrides.feeBps ?? args.feeBps, 0),
+      costs: parseJsonValue(overrides.costs ?? args.costs, null),
+    });
+  }
+
+  if (brokerName === "alpaca") return new AlpacaBroker();
+  if (brokerName === "binance") return new BinanceBroker();
+  if (brokerName === "coinbase") return new CoinbaseBroker();
+  if (brokerName === "ib" || brokerName === "interactivebrokers") {
+    return new InteractiveBrokersBroker();
+  }
+
+  throw new Error(`Unsupported broker "${brokerName}"`);
+}
+
+function brokerConfigFromArgs(args, overrides = {}) {
+  return {
+    apiKey: overrides.apiKey ?? args.apiKey,
+    apiSecret: overrides.apiSecret ?? args.apiSecret,
+    passphrase: overrides.passphrase ?? args.passphrase,
+    paper: toBoolean(overrides.paper ?? args.paper, false),
+    baseUrl: overrides.baseUrl ?? args.baseUrl,
+    wsUrl: overrides.wsUrl ?? args.wsUrl,
+    futures: toBoolean(overrides.futures ?? args.futures, false),
+  };
+}
+
+function createEmaCrossSignal({ fast = 10, slow = 30, rr = 2, stopLookback = 15 } = {}) {
   return ({ candles }) => {
     if (candles.length < Math.max(fast, slow) + 2) return null;
 
@@ -67,27 +137,17 @@ function createEmaCrossSignal({
     const slowLine = ema(closes, slow);
     const last = closes.length - 1;
 
-    if (
-      fastLine[last - 1] <= slowLine[last - 1] &&
-      fastLine[last] > slowLine[last]
-    ) {
+    if (fastLine[last - 1] <= slowLine[last - 1] && fastLine[last] > slowLine[last]) {
       const entry = candles[last].close;
-      const stop = Math.min(
-        ...candles.slice(-stopLookback).map((bar) => bar.low)
-      );
+      const stop = Math.min(...candles.slice(-stopLookback).map((bar) => bar.low));
       if (entry > stop) {
         return { side: "long", entry, stop, rr };
       }
     }
 
-    if (
-      fastLine[last - 1] >= slowLine[last - 1] &&
-      fastLine[last] < slowLine[last]
-    ) {
+    if (fastLine[last - 1] >= slowLine[last - 1] && fastLine[last] < slowLine[last]) {
       const entry = candles[last].close;
-      const stop = Math.max(
-        ...candles.slice(-stopLookback).map((bar) => bar.high)
-      );
+      const stop = Math.max(...candles.slice(-stopLookback).map((bar) => bar.high));
       if (entry < stop) {
         return { side: "short", entry, stop, rr };
       }
@@ -170,9 +230,7 @@ async function loadWalkForwardStrategy(strategyArg, args) {
   const resolved = path.resolve(process.cwd(), strategyArg);
   const module = await import(pathToFileURL(resolved).href);
   if (typeof module.signalFactory !== "function") {
-    throw new Error(
-      `Walk-forward strategy module "${strategyArg}" must export signalFactory`
-    );
+    throw new Error(`Walk-forward strategy module "${strategyArg}" must export signalFactory`);
   }
 
   const parameterSets =
@@ -196,12 +254,17 @@ async function loadWalkForwardStrategy(strategyArg, args) {
 }
 
 function printHelp() {
-  console.log(`tradelab
+  console.log(`tradelab — backtesting toolkit for Node.js
+
+Usage: tradelab <command> [options]
 
 Commands:
   backtest      Run a one-off backtest from Yahoo or CSV data
   portfolio     Run multiple CSV datasets as an equal-weight portfolio
   walk-forward  Run rolling or anchored train/test optimization
+  live          Run live trading engine (streaming or polling)
+  paper         Run live engine in paper broker mode
+  status        Read persisted live state
   prefetch      Download Yahoo candles into the local cache
   import-csv    Normalize a CSV and save it into the local cache
 
@@ -209,12 +272,21 @@ Examples:
   tradelab backtest --source yahoo --symbol SPY --interval 1d --period 1y
   tradelab backtest --source csv --csvPath ./data/btc.csv --strategy buy-hold --holdBars 3
   tradelab walk-forward --source csv --csvPath ./data/spy.csv --trainBars 120 --testBars 40
+  tradelab live --strategy ./mySignal.js --symbol AAPL --interval 5m --broker alpaca --paper
+
+Options:
+  --help       Show this help message
+  --version    Print version number
 `);
 }
 
 async function commandBacktest(args) {
+  const source = args.source || (args.csvPath ? "csv" : "yahoo");
+  if (source === "yahoo" && !args.symbol) {
+    throw new Error("backtest with Yahoo source requires --symbol (e.g. --symbol SPY)");
+  }
   const candles = await getHistoricalCandles({
-    source: args.source || (args.csvPath ? "csv" : "yahoo"),
+    source,
     symbol: args.symbol,
     interval: args.interval || "1d",
     period: args.period || "1y",
@@ -311,8 +383,12 @@ async function commandPortfolio(args) {
 }
 
 async function commandWalkForward(args) {
+  const wfSource = args.source || (args.csvPath ? "csv" : "yahoo");
+  if (wfSource === "yahoo" && !args.symbol) {
+    throw new Error("walk-forward with Yahoo source requires --symbol (e.g. --symbol QQQ)");
+  }
   const candles = await getHistoricalCandles({
-    source: args.source || (args.csvPath ? "csv" : "yahoo"),
+    source: wfSource,
     symbol: args.symbol,
     interval: args.interval || "1d",
     period: args.period || "1y",
@@ -398,10 +474,174 @@ async function commandImportCsv(args) {
   console.log(`Saved ${candles.length} candles to ${outputPath}`);
 }
 
+async function createLiveSystemFromConfig(system, args) {
+  const signal = await loadStrategy(system.strategy || args.strategy, {
+    ...args,
+    ...system,
+  });
+  return {
+    ...system,
+    signal,
+    interval: system.interval || args.interval || "1m",
+    symbol: system.symbol || args.symbol,
+  };
+}
+
+async function commandLive(args, overrides = {}) {
+  const configPath = overrides.config || args.config;
+  const mode = overrides.mode || args.mode || "streaming";
+  const stateDir = overrides.stateDir || args.stateDir || "output/live-state";
+  const once = toBoolean(overrides.once ?? args.once, mode === "polling");
+  const watch = toBoolean(overrides.watch ?? args.watch, false);
+  const storage = new JsonFileStorage({ baseDir: stateDir });
+
+  if (configPath) {
+    const fileConfig = loadJsonFile(configPath);
+    const broker = createBrokerAdapter(args, {
+      ...overrides,
+      equity: fileConfig.equity ?? overrides.equity,
+    });
+    const brokerConfig = brokerConfigFromArgs(args, overrides);
+    const systems = await Promise.all(
+      (fileConfig.systems || []).map((system) => createLiveSystemFromConfig(system, args))
+    );
+    const orchestrator = new LiveOrchestrator({
+      systems,
+      broker,
+      storage,
+      brokerConfig,
+      allocation: fileConfig.allocation || args.allocation || "equal",
+      maxDailyLossPct: toNumber(fileConfig.maxDailyLossPct ?? args.maxDailyLossPct, 0),
+      equity: toNumber(fileConfig.equity ?? args.equity, 10_000),
+    });
+    await broker.connect(brokerConfig);
+    await orchestrator.start();
+
+    if (once && orchestrator.engines?.length) {
+      await Promise.all(orchestrator.engines.map((engine) => engine.pollOnce()));
+    }
+
+    const status = orchestrator.getStatus();
+    console.log(JSON.stringify(status, null, 2));
+
+    if (!watch) {
+      await orchestrator.stop();
+    }
+    return;
+  }
+
+  const broker = createBrokerAdapter(args, overrides);
+  const brokerConfig = brokerConfigFromArgs(args, overrides);
+  const signal = await loadStrategy(overrides.strategy || args.strategy, args);
+  const engine = new LiveEngine({
+    id: overrides.id || args.id,
+    signal,
+    symbol: overrides.symbol || args.symbol,
+    interval: overrides.interval || args.interval || "1m",
+    mode,
+    pollIntervalMs: toNumber(overrides.pollIntervalMs ?? args.pollIntervalMs, 60_000),
+    warmupBars: toNumber(overrides.warmupBars ?? args.warmupBars, 200),
+    equity: toNumber(overrides.equity ?? args.equity, 10_000),
+    riskPct: toNumber(overrides.riskPct ?? args.riskPct, 1),
+    costs: parseJsonValue(overrides.costs ?? args.costs, null),
+    flattenAtClose: toBoolean(overrides.flattenAtClose ?? args.flattenAtClose, false),
+    maxDailyLossPct: toNumber(overrides.maxDailyLossPct ?? args.maxDailyLossPct, 0),
+    dailyMaxTrades: toNumber(overrides.dailyMaxTrades ?? args.dailyMaxTrades, 0),
+    broker,
+    storage,
+    brokerConfig,
+  });
+
+  await engine.start();
+
+  if (once) {
+    await engine.pollOnce();
+  }
+
+  const status = engine.getStatus();
+  console.log(JSON.stringify(status, null, 2));
+
+  if (!watch) {
+    await engine.stop();
+    return;
+  }
+
+  const shutdown = async () => {
+    await engine.stop();
+    process.exit(0);
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+}
+
+async function commandPaper(args) {
+  return commandLive(args, { paper: true, broker: "paper" });
+}
+
+async function commandStatus(args) {
+  const stateDir = args.dir || args.stateDir || "output/live-state";
+  const storage = new JsonFileStorage({ baseDir: stateDir });
+  const namespace = args.namespace || args.id;
+
+  if (namespace) {
+    const state = await storage.load(namespace);
+    const trades = await storage.loadTrades(namespace);
+    const equity = await storage.loadEquityCurve(namespace);
+    console.log(
+      JSON.stringify(
+        {
+          namespace,
+          state,
+          trades: trades.length,
+          equityPoints: equity.length,
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
+
+  if (!fs.existsSync(stateDir)) {
+    console.log(JSON.stringify({ dir: stateDir, namespaces: [] }, null, 2));
+    return;
+  }
+
+  const namespaces = fs
+    .readdirSync(stateDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  const summaries = [];
+  for (const name of namespaces) {
+    const state = await storage.load(name);
+    const trades = await storage.loadTrades(name);
+    summaries.push({
+      namespace: name,
+      savedAt: state?.savedAt ?? null,
+      equity: state?.equity ?? null,
+      openPosition: Boolean(state?.openPosition),
+      trades: trades.length,
+    });
+  }
+  console.log(
+    JSON.stringify(
+      {
+        dir: stateDir,
+        namespaces: summaries,
+      },
+      null,
+      2
+    )
+  );
+}
+
 const commands = {
   backtest: commandBacktest,
   portfolio: commandPortfolio,
   "walk-forward": commandWalkForward,
+  live: commandLive,
+  paper: commandPaper,
+  status: commandStatus,
   prefetch: commandPrefetch,
   "import-csv": commandImportCsv,
 };
@@ -409,6 +649,12 @@ const commands = {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const command = args._[0];
+
+  if (args.version || args.v) {
+    const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    console.log(pkg.version);
+    return;
+  }
 
   if (!command || command === "help" || args.help) {
     printHelp();

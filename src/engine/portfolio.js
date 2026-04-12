@@ -6,6 +6,12 @@ function asWeight(value) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function describeValue(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+
 function buildPortfolioPoint(time, equity, lockedCapital, availableCapital) {
   return {
     time,
@@ -18,6 +24,27 @@ function buildPortfolioPoint(time, equity, lockedCapital, availableCapital) {
 
 function stableSystemOrder(left, right) {
   return left.index - right.index;
+}
+
+function hashedOrderScore(index, time, seed) {
+  let value = (Number(time) ^ Math.imul(index + 1, 0x9e3779b1) ^ (seed | 0)) >>> 0;
+  value = Math.imul(value ^ (value >>> 16), 0x85ebca6b) >>> 0;
+  value = Math.imul(value ^ (value >>> 13), 0xc2b2ae35) >>> 0;
+  return (value ^ (value >>> 16)) >>> 0;
+}
+
+function orderActiveSystems(active, nextTime, processingOrder, shuffleSeed) {
+  if (processingOrder !== "shuffle") {
+    active.sort(stableSystemOrder);
+    return;
+  }
+
+  active.sort((left, right) => {
+    const leftScore = hashedOrderScore(left.index, nextTime, shuffleSeed);
+    const rightScore = hashedOrderScore(right.index, nextTime, shuffleSeed);
+    if (leftScore !== rightScore) return leftScore - rightScore;
+    return stableSystemOrder(left, right);
+  });
 }
 
 function combineReplay(systemResults, eqSeries, collectReplay) {
@@ -115,7 +142,8 @@ function forceExitAll(runners, time) {
  *
  * Existing allocation weights are preserved as default per-system capital caps,
  * but capital is only locked when a fill actually occurs. Systems therefore
- * compete for the same remaining capital at fill time.
+ * compete for the same remaining capital at fill time. `processingOrder` can be
+ * set to `"shuffle"` for fairness testing when multiple systems act on the same bar.
  */
 export function backtestPortfolio({
   systems = [],
@@ -124,9 +152,18 @@ export function backtestPortfolio({
   collectEqSeries = true,
   collectReplay = false,
   maxDailyLossPct = 0,
+  processingOrder = "sequential",
+  shuffleSeed = 0,
 } = {}) {
   if (!Array.isArray(systems) || systems.length === 0) {
-    throw new Error("backtestPortfolio() requires a non-empty systems array");
+    throw new Error(
+      `backtestPortfolio() requires a non-empty systems array, got ${describeValue(systems)}`
+    );
+  }
+  if (processingOrder !== "sequential" && processingOrder !== "shuffle") {
+    throw new Error(
+      `backtestPortfolio() processingOrder must be "sequential" or "shuffle", got ${processingOrder}`
+    );
   }
 
   const weights =
@@ -136,7 +173,9 @@ export function backtestPortfolio({
   const totalWeight = weights.reduce((sumValue, weight) => sumValue + weight, 0);
 
   if (!(totalWeight > 0)) {
-    throw new Error("backtestPortfolio() requires positive allocation weights");
+    throw new Error(
+      `backtestPortfolio() requires positive allocation weights, got allocation=${allocation}`
+    );
   }
 
   const runners = systems.map((system, index) => {
@@ -178,7 +217,7 @@ export function backtestPortfolio({
   while (true) {
     const { nextTime, active } = findNextTimeAndActive(runners);
     if (!Number.isFinite(nextTime)) break;
-    active.sort(stableSystemOrder);
+    orderActiveSystems(active, nextTime, processingOrder, shuffleSeed);
 
     const dayKey = dayKeyET(nextTime);
     if (currentDay === null || dayKey !== currentDay) {
@@ -201,8 +240,10 @@ export function backtestPortfolio({
         canTrade: !portfolioHalted,
         resolveEntrySize({ desiredSize, entryPrice }) {
           const maxLeverage = Math.max(1, systemEntry.runner.options.maxLeverage || 1);
-          const byAvailable = (availableCapital * maxLeverage) / Math.max(1e-12, Math.abs(entryPrice));
-          const bySystemCap = (systemRemainingCapital * maxLeverage) / Math.max(1e-12, Math.abs(entryPrice));
+          const byAvailable =
+            (availableCapital * maxLeverage) / Math.max(1e-12, Math.abs(entryPrice));
+          const bySystemCap =
+            (systemRemainingCapital * maxLeverage) / Math.max(1e-12, Math.abs(entryPrice));
           return Math.min(desiredSize, byAvailable, bySystemCap);
         },
       });
@@ -257,6 +298,12 @@ export function backtestPortfolio({
       }))
     )
     .sort((left, right) => left.exit.time - right.exit.time);
+  const openPositions = systemResults.flatMap((run) =>
+    (run.result.openPositions || []).map((position) => ({
+      ...position,
+      symbol: position.symbol || run.symbol,
+    }))
+  );
   const replay = combineReplay(systemResults, eqSeries, collectReplay);
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
@@ -275,6 +322,7 @@ export function backtestPortfolio({
     range: undefined,
     trades,
     positions,
+    openPositions,
     metrics,
     eqSeries,
     replay,

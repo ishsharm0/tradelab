@@ -1,6 +1,6 @@
 {
   "name": "tradelab",
-  "version": "0.5.0",
+  "version": "1.0.0",
   "description": "Backtesting toolkit for Node.js with strategy simulation, historical data loading, and report generation",
   "type": "module",
   "main": "./dist/cjs/index.cjs",
@@ -33,6 +33,11 @@
       "import": "./src/data/index.js",
       "require": "./dist/cjs/data.cjs"
     },
+    "./live": {
+      "types": "./types/live.d.ts",
+      "import": "./src/live/index.js",
+      "require": "./dist/cjs/live.cjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -48,8 +53,12 @@
   ],
   "scripts": {
     "build": "node scripts/build-cjs.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "prepare": "npm run build",
-    "prepack": "npm run build",
     "test": "node --test"
   },
   "keywords": [
@@ -67,6 +76,12 @@
     "access": "public"
   },
   "devDependencies": {
-    "esbuild": "^0.27.3"
+    "@eslint/js": "^9.25.1",
+    "@types/node": "^22.15.2",
+    "esbuild": "^0.27.3",
+    "eslint": "^9.25.1",
+    "globals": "^15.15.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3"
   }
 }

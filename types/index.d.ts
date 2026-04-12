@@ -108,6 +108,22 @@ export interface BacktestTrade {
   [key: string]: unknown;
 }
 
+export interface OpenPosition {
+  id?: number;
+  symbol?: string;
+  side: Side;
+  entry: number;
+  entryFill?: number;
+  stop: number;
+  takeProfit: number;
+  size: number;
+  openTime: number;
+  markPrice: number;
+  unrealizedPnl: number;
+  _initRisk?: number;
+  [key: string]: unknown;
+}
+
 export interface SideBreakdownEntry {
   trades: number;
   winRate: number;
@@ -353,6 +369,8 @@ export interface BacktestResult {
   trades: BacktestTrade[];
   /** Completed positions only, without intermediate realized legs. */
   positions: BacktestTrade[];
+  /** Open positions still active at end-of-data (if any). */
+  openPositions: OpenPosition[];
   /** Aggregate performance statistics. */
   metrics: BacktestMetrics;
   /** Realized equity points suitable for charts and exports. */
@@ -540,6 +558,8 @@ export function backtestPortfolio(options: {
   collectEqSeries?: boolean;
   collectReplay?: boolean;
   maxDailyLossPct?: number;
+  processingOrder?: "sequential" | "shuffle";
+  shuffleSeed?: number;
 }): PortfolioBacktestResult;
 export function walkForwardOptimize(options: {
   candles: Candle[];
@@ -637,9 +657,7 @@ export function calculatePositionSize(input: {
 export function offsetET(timeMs: number): number;
 export function minutesET(timeMs: number): number;
 export function isSession(timeMs: number, session?: "NYSE" | "FUT" | "AUTO"): boolean;
-export function parseWindowsCSV(
-  csv: string
-): Array<{ aMin: number; bMin: number }> | null;
+export function parseWindowsCSV(csv: string): Array<{ aMin: number; bMin: number }> | null;
 export function inWindowsET(
   timeMs: number,
   windows: Array<{ aMin: number; bMin: number }>
