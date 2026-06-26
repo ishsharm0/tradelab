@@ -3,9 +3,38 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const HTML_PATH = path.join(here, "..", "..", "..", "templates", "dashboard.html");
-const HTML = readFileSync(HTML_PATH, "utf8");
+const FALLBACK_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>tradelab live</title>
+  </head>
+  <body>
+    <h1>tradelab live</h1>
+    <pre id="state"></pre>
+    <script>
+      fetch("/state")
+        .then((res) => res.json())
+        .then((state) => {
+          document.getElementById("state").textContent = JSON.stringify(state, null, 2);
+        });
+    </script>
+  </body>
+</html>`;
+
+function readDashboardHtml() {
+  if (import.meta.url) {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const htmlPath = path.join(here, "..", "..", "..", "templates", "dashboard.html");
+    return readFileSync(htmlPath, "utf8");
+  }
+
+  try {
+    return readFileSync(path.join(process.cwd(), "templates", "dashboard.html"), "utf8");
+  } catch {
+    return FALLBACK_HTML;
+  }
+}
 
 /**
  * Local realtime dashboard for a LiveEngine or LiveOrchestrator.
@@ -37,7 +66,7 @@ export function createDashboardServer({ source, port = 4317, maxBuffer = 200 }) 
 
     if (url === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(HTML);
+      res.end(readDashboardHtml());
       return;
     }
 

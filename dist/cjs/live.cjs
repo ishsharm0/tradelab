@@ -56,6 +56,7 @@ __export(index_exports, {
   createCandleAggregator: () => createCandleAggregator,
   createClock: () => createClock,
   createCoinbaseBroker: () => createCoinbaseBroker,
+  createDashboardServer: () => createDashboardServer,
   createEventBus: () => createEventBus,
   createInteractiveBrokersBroker: () => createInteractiveBrokersBroker,
   createJsonFileStorage: () => createJsonFileStorage,
@@ -435,10 +436,10 @@ var AlpacaBroker = class extends BrokerAdapter {
       ...extra
     };
   }
-  async _request(method, path2, { query = null, body = null, dataApi = false } = {}) {
+  async _request(method, path3, { query = null, body = null, dataApi = false } = {}) {
     if (!this.fetch) throw new Error("global fetch is unavailable");
     const base = dataApi ? this.dataUrl : this.baseUrl;
-    const url = withQuery(`${base}${path2}`, query || {});
+    const url = withQuery(`${base}${path3}`, query || {});
     const response = await this.fetch(url, {
       method,
       headers: this._headers(),
@@ -648,11 +649,11 @@ var BinanceBroker = class extends BrokerAdapter {
     const signature = import_node_crypto.default.createHmac("sha256", this.config.apiSecret || "").update(payload).digest("hex");
     return { ...base, signature };
   }
-  async _request(method, path2, { signed = false, params = {}, body = null } = {}) {
+  async _request(method, path3, { signed = false, params = {}, body = null } = {}) {
     if (!this.fetch) throw new Error("global fetch is unavailable");
     const finalParams = signed ? this._signedParams(params) : params;
     const qs = queryString(finalParams);
-    const url = new import_node_url2.URL(`${this.baseUrl}${path2}${qs ? `?${qs}` : ""}`);
+    const url = new import_node_url2.URL(`${this.baseUrl}${path3}${qs ? `?${qs}` : ""}`);
     const headers = {
       "content-type": "application/json"
     };
@@ -671,8 +672,8 @@ var BinanceBroker = class extends BrokerAdapter {
     return payload;
   }
   async getServerTime() {
-    const path2 = this.config.futures ? "/fapi/v1/time" : "/api/v3/time";
-    const data = await this._request("GET", path2);
+    const path3 = this.config.futures ? "/fapi/v1/time" : "/api/v3/time";
+    const data = await this._request("GET", path3);
     return Number(data.serverTime || Date.now());
   }
   async getAccount() {
@@ -735,8 +736,8 @@ var BinanceBroker = class extends BrokerAdapter {
     return payload;
   }
   async submitOrder(order) {
-    const path2 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
-    const response = await this._request("POST", path2, {
+    const path3 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
+    const response = await this._request("POST", path3, {
       signed: true,
       params: this._orderPayload(order)
     });
@@ -757,8 +758,8 @@ var BinanceBroker = class extends BrokerAdapter {
     return receipt;
   }
   async cancelOrder(orderId) {
-    const path2 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
-    await this._request("DELETE", path2, {
+    const path3 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
+    await this._request("DELETE", path3, {
       signed: true,
       params: {
         orderId
@@ -767,8 +768,8 @@ var BinanceBroker = class extends BrokerAdapter {
     this.emit("order:canceled", { orderId: String(orderId) });
   }
   async modifyOrder(orderId, changes = {}) {
-    const path2 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
-    const response = await this._request("PUT", path2, {
+    const path3 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
+    const response = await this._request("PUT", path3, {
       signed: true,
       params: {
         orderId,
@@ -793,8 +794,8 @@ var BinanceBroker = class extends BrokerAdapter {
     return receipt;
   }
   async getOpenOrders() {
-    const path2 = this.config.futures ? "/fapi/v1/openOrders" : "/api/v3/openOrders";
-    const rows = await this._request("GET", path2, { signed: true });
+    const path3 = this.config.futures ? "/fapi/v1/openOrders" : "/api/v3/openOrders";
+    const rows = await this._request("GET", path3, { signed: true });
     return rows.map((row) => ({
       orderId: String(row.orderId),
       clientOrderId: row.clientOrderId,
@@ -810,8 +811,8 @@ var BinanceBroker = class extends BrokerAdapter {
     }));
   }
   async getOrderStatus(orderId) {
-    const path2 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
-    const row = await this._request("GET", path2, {
+    const path3 = this.config.futures ? "/fapi/v1/order" : "/api/v3/order";
+    const row = await this._request("GET", path3, {
       signed: true,
       params: { orderId }
     });
@@ -873,8 +874,8 @@ var BinanceBroker = class extends BrokerAdapter {
     };
   }
   async getHistoricalBars(symbol, interval, limit = 200) {
-    const path2 = this.config.futures ? "/fapi/v1/klines" : "/api/v3/klines";
-    const rows = await this._request("GET", path2, {
+    const path3 = this.config.futures ? "/fapi/v1/klines" : "/api/v3/klines";
+    const rows = await this._request("GET", path3, {
       params: { symbol, interval, limit }
     });
     const bars = rows.map((row) => ({
@@ -898,7 +899,7 @@ var import_node_url3 = require("node:url");
 function base64url(input) {
   return Buffer.from(input).toString("base64url");
 }
-function buildJwt({ key, secret, method, host, path: path2 }) {
+function buildJwt({ key, secret, method, host, path: path3 }) {
   const now = Math.floor(Date.now() / 1e3);
   const header = { alg: "HS256", typ: "JWT", kid: key };
   const payload = {
@@ -906,7 +907,7 @@ function buildJwt({ key, secret, method, host, path: path2 }) {
     sub: key,
     nbf: now - 5,
     exp: now + 120,
-    uri: `${method.toUpperCase()} ${host}${path2}`
+    uri: `${method.toUpperCase()} ${host}${path3}`
   };
   const encodedHeader = base64url(JSON.stringify(header));
   const encodedPayload = base64url(JSON.stringify(payload));
@@ -965,9 +966,9 @@ var CoinbaseBroker = class extends BrokerAdapter {
       path: target.pathname
     });
   }
-  async _request(method, path2, { query = {}, body = null } = {}) {
+  async _request(method, path3, { query = {}, body = null } = {}) {
     if (!this.fetch) throw new Error("global fetch is unavailable");
-    const url = new import_node_url3.URL(`${this.baseUrl}${path2}`);
+    const url = new import_node_url3.URL(`${this.baseUrl}${path3}`);
     for (const [key, value] of Object.entries(query || {})) {
       if (value === void 0 || value === null) continue;
       url.searchParams.set(key, String(value));
@@ -3310,6 +3311,112 @@ var LiveOrchestrator = class {
 function createLiveOrchestrator(options) {
   return new LiveOrchestrator(options);
 }
+
+// src/live/dashboard/server.js
+var import_node_http = __toESM(require("node:http"), 1);
+var import_node_fs2 = require("node:fs");
+var import_node_path2 = __toESM(require("node:path"), 1);
+var import_node_url4 = require("node:url");
+var import_meta = {};
+var FALLBACK_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>tradelab live</title>
+  </head>
+  <body>
+    <h1>tradelab live</h1>
+    <pre id="state"></pre>
+    <script>
+      fetch("/state")
+        .then((res) => res.json())
+        .then((state) => {
+          document.getElementById("state").textContent = JSON.stringify(state, null, 2);
+        });
+    </script>
+  </body>
+</html>`;
+function readDashboardHtml() {
+  if (import_meta.url) {
+    const here = import_node_path2.default.dirname((0, import_node_url4.fileURLToPath)(import_meta.url));
+    const htmlPath = import_node_path2.default.join(here, "..", "..", "..", "templates", "dashboard.html");
+    return (0, import_node_fs2.readFileSync)(htmlPath, "utf8");
+  }
+  try {
+    return (0, import_node_fs2.readFileSync)(import_node_path2.default.join(process.cwd(), "templates", "dashboard.html"), "utf8");
+  } catch {
+    return FALLBACK_HTML;
+  }
+}
+function createDashboardServer({ source, port = 4317, maxBuffer = 200 }) {
+  if (!source?.eventBus || typeof source.eventBus.onAny !== "function") {
+    throw new Error("dashboard source must expose an eventBus with onAny()");
+  }
+  const recent = [];
+  const clients = /* @__PURE__ */ new Set();
+  const unsubscribe = source.eventBus.onAny(({ event, payload }) => {
+    const msg = { event, payload, t: Date.now() };
+    recent.push(msg);
+    if (recent.length > maxBuffer) recent.shift();
+    const frame = `data: ${JSON.stringify(msg)}
+
+`;
+    for (const res of clients) res.write(frame);
+  });
+  const server = import_node_http.default.createServer((req, res) => {
+    const url = (req.url || "/").split("?")[0];
+    if (url === "/") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(readDashboardHtml());
+      return;
+    }
+    if (url === "/state") {
+      const status = typeof source.getStatus === "function" ? source.getStatus() : {};
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(status));
+      return;
+    }
+    if (url === "/events") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive"
+      });
+      res.flushHeaders();
+      for (const msg of recent) res.write(`data: ${JSON.stringify(msg)}
+
+`);
+      clients.add(res);
+      req.on("close", () => clients.delete(res));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("not found");
+  });
+  return {
+    start() {
+      return new Promise((resolve) => {
+        server.listen(port, () => {
+          const address = server.address();
+          const actualPort = typeof address === "object" && address ? address.port : port;
+          resolve(`http://localhost:${actualPort}`);
+        });
+      });
+    },
+    close() {
+      unsubscribe();
+      for (const res of clients) res.end();
+      clients.clear();
+      return new Promise((resolve, reject) => {
+        server.close((error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+    },
+    server
+  };
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   AlpacaBroker,
@@ -3338,6 +3445,7 @@ function createLiveOrchestrator(options) {
   createCandleAggregator,
   createClock,
   createCoinbaseBroker,
+  createDashboardServer,
   createEventBus,
   createInteractiveBrokersBroker,
   createJsonFileStorage,

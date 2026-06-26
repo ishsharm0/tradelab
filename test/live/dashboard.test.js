@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { EventBus } from "../../src/live/events.js";
 import { createDashboardServer } from "../../src/live/dashboard/server.js";
+import * as live from "../../src/live/index.js";
 
 function get(url) {
   return new Promise((resolve, reject) => {
@@ -66,4 +67,8 @@ test("/events streams a bussed event as SSE", async () => {
   assert.ok(received.startsWith("data:"));
   assert.ok(received.includes("position:opened"));
   await dash.close();
+});
+
+test("createDashboardServer is exported from tradelab/live", () => {
+  assert.equal(typeof live.createDashboardServer, "function");
 });

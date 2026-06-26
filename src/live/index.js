@@ -25,3 +25,4 @@ export { PaperEngine, createPaperEngine } from "./engine/paperEngine.js";
 export { LiveEngine, createLiveEngine } from "./engine/liveEngine.js";
 
 export { LiveOrchestrator, createLiveOrchestrator } from "./orchestrator.js";
+export { createDashboardServer } from "./dashboard/server.js";
