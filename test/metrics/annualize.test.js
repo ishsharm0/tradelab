@@ -13,7 +13,10 @@ test("periodsPerYear maps common intervals to trading-period counts", () => {
 test("periodsPerYear falls back to estBarMs when interval is unknown", () => {
   // 1-hour bars in ms, 24/7 market assumption => 24*365 periods
   const oneHourMs = 60 * 60 * 1000;
-  assert.equal(periodsPerYear("weird", oneHourMs), Math.round((365 * 24 * 60 * 60 * 1000) / oneHourMs));
+  assert.equal(
+    periodsPerYear("weird", oneHourMs),
+    Math.round((365 * 24 * 60 * 60 * 1000) / oneHourMs)
+  );
 });
 
 test("periodsPerYear returns 252 when nothing is resolvable", () => {

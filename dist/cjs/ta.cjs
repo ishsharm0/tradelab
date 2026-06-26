@@ -21,12 +21,20 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   atr: () => atr,
+  bollinger: () => bollinger,
   detectFVG: () => detectFVG,
+  donchian: () => donchian,
   ema: () => ema,
+  keltner: () => keltner,
   lastSwing: () => lastSwing,
+  macd: () => macd,
+  rsi: () => rsi,
+  stochastic: () => stochastic,
   structureState: () => structureState,
+  supertrend: () => supertrend,
   swingHigh: () => swingHigh,
-  swingLow: () => swingLow
+  swingLow: () => swingLow,
+  vwap: () => vwap
 });
 module.exports = __toCommonJS(index_exports);
 
@@ -144,13 +152,188 @@ function atr(bars, period = 14) {
   }
   return output;
 }
+
+// src/ta/oscillators.js
+function rsi(closes, period = 14) {
+  const out = new Array(closes.length).fill(void 0);
+  if (closes.length <= period) return out;
+  let gainSum = 0;
+  let lossSum = 0;
+  for (let i = 1; i <= period; i += 1) {
+    const change = closes[i] - closes[i - 1];
+    if (change >= 0) gainSum += change;
+    else lossSum -= change;
+  }
+  let avgGain = gainSum / period;
+  let avgLoss = lossSum / period;
+  out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  for (let i = period + 1; i < closes.length; i += 1) {
+    const change = closes[i] - closes[i - 1];
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? -change : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+  return out;
+}
+function macd(closes, fast = 12, slow = 26, signalPeriod = 9) {
+  const emaFast = ema(closes, fast);
+  const emaSlow = ema(closes, slow);
+  const macdLine = closes.map((_, i) => emaFast[i] - emaSlow[i]);
+  const signalLine = ema(macdLine, signalPeriod);
+  const histogram = macdLine.map((v, i) => v - signalLine[i]);
+  return { macd: macdLine, signal: signalLine, histogram };
+}
+function stochastic(bars, kPeriod = 14, dPeriod = 3) {
+  const k = new Array(bars.length).fill(void 0);
+  for (let i = kPeriod - 1; i < bars.length; i += 1) {
+    let hh = -Infinity;
+    let ll = Infinity;
+    for (let j = i - kPeriod + 1; j <= i; j += 1) {
+      if (bars[j].high > hh) hh = bars[j].high;
+      if (bars[j].low < ll) ll = bars[j].low;
+    }
+    const range = hh - ll;
+    k[i] = range === 0 ? 0 : (bars[i].close - ll) / range * 100;
+  }
+  const d = new Array(bars.length).fill(void 0);
+  for (let i = 0; i < bars.length; i += 1) {
+    if (i < kPeriod - 1 + dPeriod - 1) continue;
+    let sum = 0;
+    for (let j = i - dPeriod + 1; j <= i; j += 1) sum += k[j];
+    d[i] = sum / dPeriod;
+  }
+  return { k, d };
+}
+
+// src/ta/channels.js
+function rollingMean(values, period, i) {
+  let sum = 0;
+  for (let j = i - period + 1; j <= i; j += 1) sum += values[j];
+  return sum / period;
+}
+function bollinger(closes, period = 20, mult = 2) {
+  const middle = new Array(closes.length).fill(void 0);
+  const upper = new Array(closes.length).fill(void 0);
+  const lower = new Array(closes.length).fill(void 0);
+  for (let i = period - 1; i < closes.length; i += 1) {
+    const avg = rollingMean(closes, period, i);
+    let variance = 0;
+    for (let j = i - period + 1; j <= i; j += 1) variance += (closes[j] - avg) ** 2;
+    const sd = Math.sqrt(variance / period);
+    middle[i] = avg;
+    upper[i] = avg + mult * sd;
+    lower[i] = avg - mult * sd;
+  }
+  return { middle, upper, lower };
+}
+function donchian(bars, period = 20) {
+  const upper = new Array(bars.length).fill(void 0);
+  const lower = new Array(bars.length).fill(void 0);
+  const middle = new Array(bars.length).fill(void 0);
+  for (let i = period - 1; i < bars.length; i += 1) {
+    let hh = -Infinity;
+    let ll = Infinity;
+    for (let j = i - period + 1; j <= i; j += 1) {
+      if (bars[j].high > hh) hh = bars[j].high;
+      if (bars[j].low < ll) ll = bars[j].low;
+    }
+    upper[i] = hh;
+    lower[i] = ll;
+    middle[i] = (hh + ll) / 2;
+  }
+  return { upper, lower, middle };
+}
+function keltner(bars, emaPeriod = 20, atrPeriod = 14, mult = 2) {
+  const closes = bars.map((b) => b.close);
+  const mid = ema(closes, emaPeriod);
+  const range = atr(bars, atrPeriod);
+  const upper = new Array(bars.length).fill(void 0);
+  const lower = new Array(bars.length).fill(void 0);
+  const middle = new Array(bars.length).fill(void 0);
+  for (let i = 0; i < bars.length; i += 1) {
+    if (range[i] === void 0) continue;
+    middle[i] = mid[i];
+    upper[i] = mid[i] + mult * range[i];
+    lower[i] = mid[i] - mult * range[i];
+  }
+  return { upper, lower, middle };
+}
+
+// src/ta/trend.js
+function supertrend(bars, period = 10, mult = 3) {
+  const range = atr(bars, period);
+  const line = new Array(bars.length).fill(void 0);
+  const direction = new Array(bars.length).fill(void 0);
+  let prevUpper = Infinity;
+  let prevLower = -Infinity;
+  let prevDir = 1;
+  for (let i = 0; i < bars.length; i += 1) {
+    if (range[i] === void 0) continue;
+    const mid = (bars[i].high + bars[i].low) / 2;
+    const basicUpper = mid + mult * range[i];
+    const basicLower = mid - mult * range[i];
+    const close = bars[i].close;
+    const prevClose = i > 0 ? bars[i - 1].close : close;
+    const upper = basicUpper < prevUpper || prevClose > prevUpper ? basicUpper : prevUpper;
+    const lower = basicLower > prevLower || prevClose < prevLower ? basicLower : prevLower;
+    let dir = prevDir;
+    if (prevDir === 1 && close < lower) dir = -1;
+    else if (prevDir === -1 && close > upper) dir = 1;
+    line[i] = dir === 1 ? lower : upper;
+    direction[i] = dir;
+    prevUpper = upper;
+    prevLower = lower;
+    prevDir = dir;
+  }
+  return { line, direction };
+}
+function dayKeyUTC(timeMs) {
+  const d = new Date(timeMs);
+  return d.getUTCFullYear() * 1e4 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
+function vwap(bars) {
+  const out = new Array(bars.length).fill(void 0);
+  let currentDay = null;
+  let cumPV = 0;
+  let cumV = 0;
+  let cumTP = 0;
+  let count = 0;
+  for (let i = 0; i < bars.length; i += 1) {
+    const day = dayKeyUTC(bars[i].time);
+    if (day !== currentDay) {
+      currentDay = day;
+      cumPV = 0;
+      cumV = 0;
+      cumTP = 0;
+      count = 0;
+    }
+    const tp = (bars[i].high + bars[i].low + bars[i].close) / 3;
+    const vol = Number.isFinite(bars[i].volume) ? bars[i].volume : 0;
+    cumPV += tp * vol;
+    cumV += vol;
+    cumTP += tp;
+    count += 1;
+    out[i] = cumV > 0 ? cumPV / cumV : cumTP / count;
+  }
+  return out;
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   atr,
+  bollinger,
   detectFVG,
+  donchian,
   ema,
+  keltner,
   lastSwing,
+  macd,
+  rsi,
+  stochastic,
   structureState,
+  supertrend,
   swingHigh,
-  swingLow
+  swingLow,
+  vwap
 });

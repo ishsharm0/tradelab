@@ -119,22 +119,93 @@ function calculatePositionSize({
   return quantity >= minQty ? quantity : 0;
 }
 
+// src/metrics/finite.js
+var BIG_NUMBER = 1e9;
+function clampFinite(value, fallback = 0) {
+  if (value === Infinity) return BIG_NUMBER;
+  if (value === -Infinity) return -BIG_NUMBER;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return fallback;
+}
+
+// src/metrics/annualize.js
+var TRADING_DAYS = 252;
+var RTH_HOURS = 6.5;
+var MS_PER_YEAR = 365 * 24 * 60 * 60 * 1e3;
+var INTERVAL_PERIODS = {
+  "1m": TRADING_DAYS * RTH_HOURS * 60,
+  "2m": TRADING_DAYS * RTH_HOURS * 30,
+  "5m": TRADING_DAYS * RTH_HOURS * 12,
+  "15m": TRADING_DAYS * RTH_HOURS * 4,
+  "30m": TRADING_DAYS * RTH_HOURS * 2,
+  "1h": TRADING_DAYS * RTH_HOURS,
+  "60m": TRADING_DAYS * RTH_HOURS,
+  "1d": TRADING_DAYS,
+  "1wk": 52,
+  "1mo": 12
+};
+function periodsPerYear(interval, estBarMs) {
+  if (interval && INTERVAL_PERIODS[interval]) return INTERVAL_PERIODS[interval];
+  if (Number.isFinite(estBarMs) && estBarMs > 0) {
+    return Math.round(MS_PER_YEAR / estBarMs);
+  }
+  return TRADING_DAYS;
+}
+
+// src/metrics/benchmark.js
+function mean(xs) {
+  return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+}
+function benchmarkStats(strategyReturns, benchmarkReturns) {
+  const nullStats = {
+    alpha: null,
+    beta: null,
+    correlation: null,
+    informationRatio: null,
+    trackingError: null
+  };
+  if (!Array.isArray(strategyReturns) || !Array.isArray(benchmarkReturns) || strategyReturns.length === 0 || strategyReturns.length !== benchmarkReturns.length) {
+    return nullStats;
+  }
+  const meanStrat = mean(strategyReturns);
+  const meanBench = mean(benchmarkReturns);
+  let covar = 0;
+  let varBench = 0;
+  let varStrat = 0;
+  for (let i = 0; i < strategyReturns.length; i += 1) {
+    const ds = strategyReturns[i] - meanStrat;
+    const db = benchmarkReturns[i] - meanBench;
+    covar += ds * db;
+    varBench += db * db;
+    varStrat += ds * ds;
+  }
+  const beta = varBench === 0 ? 0 : covar / varBench;
+  const alpha = meanStrat - beta * meanBench;
+  const denom = Math.sqrt(varStrat * varBench);
+  const correlation = denom === 0 ? 0 : covar / denom;
+  const active = strategyReturns.map((r, i) => r - benchmarkReturns[i]);
+  const meanActive = mean(active);
+  const trackingError = Math.sqrt(mean(active.map((a) => (a - meanActive) ** 2)));
+  const informationRatio = trackingError === 0 ? 0 : meanActive / trackingError;
+  return { alpha, beta, correlation, informationRatio, trackingError };
+}
+
 // src/metrics/buildMetrics.js
 function sum(values) {
   return values.reduce((total, value) => total + value, 0);
 }
-function mean(values) {
+function mean2(values) {
   return values.length ? sum(values) / values.length : 0;
 }
 function stddev(values) {
   if (values.length <= 1) return 0;
-  const avg = mean(values);
-  return Math.sqrt(mean(values.map((value) => (value - avg) ** 2)));
+  const avg = mean2(values);
+  return Math.sqrt(mean2(values.map((value) => (value - avg) ** 2)));
 }
 function sortino(values) {
   const losses = values.filter((value) => value < 0);
   const downsideDeviation = stddev(losses.length ? losses : [0]);
-  const avg = mean(values);
+  const avg = mean2(values);
   return downsideDeviation === 0 ? avg > 0 ? Infinity : 0 : avg / downsideDeviation;
 }
 function dayKeyUTC(timeMs) {
@@ -220,14 +291,22 @@ function percentile(values, percentileRank) {
   const index = Math.floor((sorted.length - 1) * percentileRank);
   return sorted[index];
 }
-var PROFIT_FACTOR_CAP = 1e6;
 function finiteProfitFactor(grossProfit, grossLoss) {
   if (grossLoss === 0) {
-    return grossProfit > 0 ? PROFIT_FACTOR_CAP : 0;
+    return grossProfit > 0 ? BIG_NUMBER : 0;
   }
   return grossProfit / grossLoss;
 }
-function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqSeries }) {
+function buildMetrics({
+  closed,
+  equityStart,
+  equityFinal,
+  candles,
+  estBarMs,
+  eqSeries,
+  interval,
+  benchmarkReturns
+}) {
   const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
   const completedTrades = [];
   const tradeRs = [];
@@ -297,11 +376,11 @@ function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqS
       if (pnl > 0) shortTradeWins += 1;
     }
   }
-  const avgR = mean(tradeRs);
+  const avgR = mean2(tradeRs);
   const { maxWin, maxLoss } = streaks(labels);
-  const expectancy = mean(tradePnls);
+  const expectancy = mean2(tradePnls);
   const tradeReturnStd = stddev(tradeReturns);
-  const sharpePerTrade = tradeReturnStd === 0 ? tradeReturns.length ? Infinity : 0 : mean(tradeReturns) / tradeReturnStd;
+  const sharpePerTrade = tradeReturnStd === 0 ? tradeReturns.length ? Infinity : 0 : mean2(tradeReturns) / tradeReturnStd;
   const sortinoPerTrade = sortino(tradeReturns);
   const profitFactorPositions = finiteProfitFactor(grossProfitPositions, grossLossPositions);
   const profitFactorLegs = finiteProfitFactor(grossProfitLegs, grossLossLegs);
@@ -309,11 +388,11 @@ function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqS
   const calmar = maxDrawdown === 0 ? returnPct > 0 ? Infinity : 0 : returnPct / maxDrawdown;
   const totalBars = Math.max(1, candles.length);
   const exposurePct = openBars / totalBars;
-  const avgHoldMin = mean(holdDurationsMinutes);
+  const avgHoldMin = mean2(holdDurationsMinutes);
   const equitySeries = eqSeries && eqSeries.length ? eqSeries : buildEquitySeriesFromLegs({ legs, equityStart });
   const dailyReturnsSeries = dailyReturns(equitySeries);
   const dailyStd = stddev(dailyReturnsSeries);
-  const sharpeDaily = dailyStd === 0 ? dailyReturnsSeries.length ? Infinity : 0 : mean(dailyReturnsSeries) / dailyStd;
+  const sharpeDaily = dailyStd === 0 ? dailyReturnsSeries.length ? Infinity : 0 : mean2(dailyReturnsSeries) / dailyStd;
   const sortinoDaily = sortino(dailyReturnsSeries);
   const dailyWinRate = dailyReturnsSeries.length ? dailyReturnsSeries.filter((value) => value > 0).length / dailyReturnsSeries.length : 0;
   const rDistribution = {
@@ -335,28 +414,36 @@ function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqS
       trades: longTradesCount,
       winRate: longTradesCount ? longTradeWins / longTradesCount : 0,
       avgPnL: longTradesCount ? longPnLSum / longTradesCount : 0,
-      avgR: mean(longRs)
+      avgR: mean2(longRs)
     },
     short: {
       trades: shortTradesCount,
       winRate: shortTradesCount ? shortTradeWins / shortTradesCount : 0,
       avgPnL: shortTradesCount ? shortPnLSum / shortTradesCount : 0,
-      avgR: mean(shortRs)
+      avgR: mean2(shortRs)
     }
   };
+  const periods = periodsPerYear(interval, estBarMs);
+  const sqrtPeriods = Math.sqrt(periods);
+  const sharpeAnnualized = clampFinite(clampFinite(sharpeDaily) * sqrtPeriods);
+  const sortinoAnnualized = clampFinite(clampFinite(sortinoDaily) * sqrtPeriods);
+  const benchmark = benchmarkStats(dailyReturnsSeries, benchmarkReturns ?? []);
   return {
     trades: completedTrades.length,
     winRate: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
-    profitFactor: profitFactorPositions,
+    profitFactor: clampFinite(profitFactorPositions),
     expectancy,
     totalR,
     avgR,
-    sharpe: sharpeDaily,
-    sharpePerTrade,
-    sortinoPerTrade,
+    sharpe: clampFinite(sharpeDaily),
+    sharpeAnnualized,
+    sortinoAnnualized,
+    sharpePerTrade: clampFinite(sharpePerTrade),
+    sortinoPerTrade: clampFinite(sortinoPerTrade),
+    annualizationPeriods: periods,
     maxDrawdown,
     maxDrawdownPct: maxDrawdown,
-    calmar,
+    calmar: clampFinite(calmar),
     maxConsecWins: maxWin,
     maxConsecLosses: maxLoss,
     avgHold: avgHoldMin,
@@ -366,12 +453,13 @@ function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqS
     returnPct,
     finalEquity: equityFinal,
     startEquity: equityStart,
-    profitFactor_pos: profitFactorPositions,
-    profitFactor_leg: profitFactorLegs,
+    profitFactor_pos: clampFinite(profitFactorPositions),
+    profitFactor_leg: clampFinite(profitFactorLegs),
     winRate_pos: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
     winRate_leg: legs.length ? winningLegCount / legs.length : 0,
-    sharpeDaily,
-    sortinoDaily,
+    sharpeDaily: clampFinite(sharpeDaily),
+    sortinoDaily: clampFinite(sortinoDaily),
+    benchmark,
     sideBreakdown,
     long: sideBreakdown.long,
     short: sideBreakdown.short,
@@ -380,7 +468,7 @@ function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqS
     daily: {
       count: dailyReturnsSeries.length,
       winRate: dailyWinRate,
-      avgReturn: mean(dailyReturnsSeries)
+      avgReturn: mean2(dailyReturnsSeries)
     }
   };
 }
@@ -931,6 +1019,7 @@ function mergeOptions(options) {
     maxSlipROnFill: options.maxSlipROnFill ?? 0.4,
     collectEqSeries: options.collectEqSeries ?? true,
     collectReplay: options.collectReplay ?? true,
+    benchmarkReturns: Array.isArray(options.benchmarkReturns) ? options.benchmarkReturns : null,
     strict: options.strict ?? false
   };
 }
@@ -1483,7 +1572,9 @@ function backtest(rawOptions) {
     equityFinal: currentEquity,
     candles,
     estBarMs: estimatedBarMs,
-    eqSeries
+    eqSeries,
+    interval: options.interval,
+    benchmarkReturns: options.benchmarkReturns
   });
   const positions = closed.filter((trade) => trade.exit.reason !== "SCALE");
   const lastPrice = asNumber(candles[candles.length - 1]?.close);
