@@ -296,8 +296,8 @@ export function buildMetrics({
 
   const periods = periodsPerYear(interval, estBarMs);
   const sqrtPeriods = Math.sqrt(periods);
-  const sharpeAnnualized = clampFinite(sharpeDaily) * sqrtPeriods;
-  const sortinoAnnualized = clampFinite(sortinoDaily) * sqrtPeriods;
+  const sharpeAnnualized = clampFinite(clampFinite(sharpeDaily) * sqrtPeriods);
+  const sortinoAnnualized = clampFinite(clampFinite(sortinoDaily) * sqrtPeriods);
   const benchmark = benchmarkStats(dailyReturnsSeries, benchmarkReturns ?? []);
 
   return {
@@ -325,8 +325,8 @@ export function buildMetrics({
     returnPct,
     finalEquity: equityFinal,
     startEquity: equityStart,
-    profitFactor_pos: profitFactorPositions,
-    profitFactor_leg: profitFactorLegs,
+    profitFactor_pos: clampFinite(profitFactorPositions),
+    profitFactor_leg: clampFinite(profitFactorLegs),
     winRate_pos: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
     winRate_leg: legs.length ? winningLegCount / legs.length : 0,
     sharpeDaily: clampFinite(sharpeDaily),

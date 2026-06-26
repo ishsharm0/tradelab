@@ -21,7 +21,10 @@ test("profitFactor with zero losses is clamped to BIG_NUMBER, not Infinity", () 
     closed,
     equityStart: 1000,
     equityFinal: 1012,
-    candles: [{ time: 1_000, close: 100 }, { time: 2_000, close: 100 }],
+    candles: [
+      { time: 1_000, close: 100 },
+      { time: 2_000, close: 100 },
+    ],
     estBarMs: 1000,
     eqSeries: [],
     interval: "1d",
@@ -51,9 +54,7 @@ test("sharpeAnnualized scales the per-period daily sharpe by sqrt(periodsPerYear
     interval: "1d",
   });
   assert.equal("sharpeAnnualized" in m, true);
-  if (Number.isFinite(m.sharpe) && m.sharpe !== 0) {
-    assert.ok(Math.abs(m.sharpeAnnualized - m.sharpe * Math.sqrt(252)) < 1e-6);
-  }
+  assert.ok(Math.abs(m.sharpeAnnualized - m.sharpe * Math.sqrt(252)) < 1e-6);
 });
 
 test("benchmarkReturns produce a benchmark block with beta", () => {
