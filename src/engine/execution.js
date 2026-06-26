@@ -127,3 +127,42 @@ export function dayKeyET(timeMs) {
   const pseudoEtTime = anchor.getTime() + hoursET * 60 * 60 * 1000 + minutesETDay * 60 * 1000;
   return dayKeyUTC(pseudoEtTime);
 }
+
+const MS_PER_YEAR = 365 * 24 * 60 * 60 * 1000;
+
+/**
+ * Count funding boundaries in the half-open interval (fromMs, toMs], given a
+ * funding `intervalMs` cadence anchored at `anchorMs`.
+ */
+export function fundingEvents(fromMs, toMs, intervalMs, anchorMs = 0) {
+  if (!(intervalMs > 0) || toMs <= fromMs) return 0;
+  const firstK = Math.floor((fromMs - anchorMs) / intervalMs) + 1;
+  const lastK = Math.floor((toMs - anchorMs) / intervalMs);
+  return Math.max(0, lastK - firstK + 1);
+}
+
+/**
+ * Time-based financing cost for holding `notional` from `fromMs` to `toMs`.
+ * Positive return = cost to the position (subtract from PnL).
+ */
+export function financingCost({ side, notional, fromMs, toMs, costs }) {
+  const model = costs || {};
+  const absNotional = Math.abs(notional);
+  let cost = 0;
+
+  if (model.carry) {
+    const annualBps =
+      side === "long" ? (model.carry.longAnnualBps ?? 0) : (model.carry.shortAnnualBps ?? 0);
+    const years = Math.max(0, toMs - fromMs) / MS_PER_YEAR;
+    cost += absNotional * (annualBps / 10000) * years;
+  }
+
+  const funding = model.funding;
+  if (funding && funding.intervalMs > 0 && Number.isFinite(funding.rateBps)) {
+    const count = fundingEvents(fromMs, toMs, funding.intervalMs, funding.anchorMs ?? 0);
+    const perEvent = absNotional * (funding.rateBps / 10000);
+    cost += (side === "long" ? 1 : -1) * perEvent * count;
+  }
+
+  return cost;
+}
