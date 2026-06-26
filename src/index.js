@@ -4,6 +4,8 @@ export { backtestTicks } from "./engine/backtestTicks.js";
 export { backtestPortfolio } from "./engine/portfolio.js";
 export { LlmSignal } from "./engine/llmSignal.js";
 export { walkForwardOptimize } from "./engine/walkForward.js";
+export { optimize } from "./engine/optimize.js";
+export { grid } from "./engine/grid.js";
 export { listStrategies, getStrategy, registerStrategy } from "./strategies/index.js";
 export * as research from "./research/index.js";
 
