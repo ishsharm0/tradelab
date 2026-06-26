@@ -2,7 +2,7 @@ import { calculatePositionSize } from "../../utils/positionSizing.js";
 import { normalizeCandles } from "../../data/csv.js";
 import { isEODBar, ocoExitCheck } from "../../engine/execution.js";
 import {
-  callSignalWithContext,
+  callSignalWithContextAsync,
   normalizeSignal,
   snapshotOpenPosition,
 } from "../../engine/barSystemRunner.js";
@@ -513,7 +513,7 @@ export class LiveEngine {
 
     if (!this.openPosition && !this.pendingOrder) {
       const context = this._signalContext(bar);
-      const rawSignal = callSignalWithContext({
+      const rawSignal = await callSignalWithContextAsync({
         signal: this.options.signal,
         context,
         index: context.index,

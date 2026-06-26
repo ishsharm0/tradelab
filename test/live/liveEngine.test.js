@@ -138,3 +138,36 @@ test("LiveEngine handles immediate market fills from paper broker", async () => 
   assert.equal(engine.openPosition, null);
   await engine.stop();
 });
+
+test("LiveEngine awaits an async signal", async () => {
+  const bars = buildBars();
+  const broker = new PaperEngine({ equity: 10_000, slippageBps: 0, feeBps: 0 });
+  broker.setHistoricalBars("AAPL", "1m", bars.slice(0, 1));
+  const engine = new LiveEngine({
+    id: "live-async-signal",
+    symbol: "AAPL",
+    interval: "1m",
+    broker,
+    storage: new JsonFileStorage({ baseDir: tempStateDir() }),
+    warmupBars: 1,
+    mode: "streaming",
+    flattenAtClose: false,
+    oco: { mode: "intrabar", tieBreak: "pessimistic" },
+    async signal({ index, bar }) {
+      await Promise.resolve();
+      if (index !== 1) return null;
+      return {
+        side: "buy",
+        stop: bar.close - 1,
+        rr: 1,
+        qty: 1,
+      };
+    },
+  });
+
+  await engine.start();
+  await broker.simulateBar("AAPL", "1m", bars[1]);
+
+  assert.notEqual(engine.getStatus().openPosition, null);
+  await engine.stop();
+});
