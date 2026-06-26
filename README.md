@@ -17,6 +17,8 @@
 
 Use it for backtests, portfolio and walk-forward validation, and live or paper execution through broker adapters while keeping the same `signal()` contract.
 
+AI-agent users: see [docs/mcp.md](docs/mcp.md) to run the research loop via MCP.
+
 ```bash
 npm install tradelab
 ```
@@ -44,17 +46,21 @@ npm install tradelab
 
 ## What it includes
 
-| Area               | What you get                                                                             |
-| ------------------ | ---------------------------------------------------------------------------------------- |
-| **Engine**         | Candle and tick backtests with position sizing, exits, replay capture, and cost models   |
-| **Async signals**  | Promise-returning signals, `LlmSignal` caching/budgets, and live async signal support    |
-| **Portfolio**      | Multi-system shared-capital simulation with live capital locking and daily loss halts    |
-| **Walk-forward**   | Rolling and anchored train/test validation with parameter search and stability summaries |
-| **Live execution** | Live and paper engines with broker adapters, state persistence, and orchestration        |
-| **Data**           | Yahoo Finance downloads, CSV import, and local cache helpers                             |
-| **Costs**          | Slippage, spread, and commission modeling                                                |
-| **Exports**        | HTML reports, metrics JSON, and trade CSV                                                |
-| **Dev experience** | TypeScript definitions, ESM/CJS support, CLI for quick runs                              |
+| Area                       | What you get                                                                                       |
+| -------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Engine**                 | Candle and tick backtests with position sizing, exits, replay capture, and cost models             |
+| **Async / AI signals**     | Promise-returning signals, `LlmSignal` caching/budgets, and live async signal support              |
+| **Indicators (`ta`)**      | RSI, MACD, stochastic, Bollinger, Donchian, Keltner, Supertrend, VWAP, EMA, ATR, swing/FVG helpers |
+| **Optimization**           | `optimize()` worker-pool parameter sweep and `grid()` spec helper                                  |
+| **Portfolio**              | Multi-system shared-capital simulation with live capital locking and daily loss halts              |
+| **Walk-forward**           | Rolling and anchored train/test validation with parameter search and stability summaries           |
+| **Research / overfitting** | Monte Carlo, deflated Sharpe, sweep haircut, PBO (CSCV), and CPCV combinatorial purging            |
+| **AI / MCP server**        | `tradelab-mcp` stdio server — run the research loop from Claude Desktop, Cursor, or any MCP agent  |
+| **Live execution**         | Live and paper engines with broker adapters, state persistence, orchestration, and SSE dashboard   |
+| **Data**                   | Yahoo Finance downloads, CSV import, and local cache helpers                                       |
+| **Costs**                  | Slippage, spread, commission, annualized carry/borrow, and perpetual futures funding               |
+| **Exports**                | HTML reports, metrics JSON, and trade CSV                                                          |
+| **Dev experience**         | TypeScript definitions, ESM/CJS support, CLI for quick runs                                        |
 
 ---
 
@@ -454,21 +460,26 @@ The examples are a good place to start if you want something runnable before wir
 
 ```js
 import { backtest, getHistoricalCandles, ema } from "tradelab";
-import { backtestAsync, LlmSignal } from "tradelab";
+import { backtestAsync, LlmSignal, optimize, grid } from "tradelab";
+import { research } from "tradelab"; // monteCarlo, deflatedSharpe, probabilityOfBacktestOverfitting, ...
 import { fetchHistorical } from "tradelab/data";
-import { LiveEngine, PaperEngine } from "tradelab/live";
+import { LiveEngine, PaperEngine, createDashboardServer } from "tradelab/live";
 import { rsi, macd, bollinger, vwap, supertrend } from "tradelab/ta";
+import { createServer, startStdioServer } from "tradelab/mcp";
 ```
 
 ### CommonJS
 
 ```js
 const { backtest, getHistoricalCandles, ema } = require("tradelab");
-const { backtestAsync, LlmSignal } = require("tradelab");
+const { backtestAsync, LlmSignal, optimize, grid } = require("tradelab");
+const { research } = require("tradelab");
 const { fetchHistorical } = require("tradelab/data");
-const { LiveEngine, PaperEngine } = require("tradelab/live");
+const { LiveEngine, PaperEngine, createDashboardServer } = require("tradelab/live");
 const { rsi, macd, bollinger, vwap, supertrend } = require("tradelab/ta");
 ```
+
+> `tradelab/mcp` is ESM-only (the MCP SDK is ESM-only). Use the `tradelab-mcp` binary or import it from an ESM context.
 
 ---
 
