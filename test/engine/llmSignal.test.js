@@ -59,7 +59,6 @@ test("LlmSignal blocks lookahead access to future candles", async () => {
   const sig = new LlmSignal({
     async resolve({ candles: view, index }) {
       try {
-        // eslint-disable-next-line no-unused-expressions
         view[index + 1].close;
         leaked = true;
       } catch {

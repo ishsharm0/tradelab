@@ -990,7 +990,9 @@ export class BarSystemRunner {
       };
 
       if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
-        if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
+        if (
+          !this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)
+        ) {
           this.pending = null;
         }
       }

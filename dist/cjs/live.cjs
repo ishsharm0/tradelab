@@ -2549,9 +2549,9 @@ function asNumber2(value) {
 function formatIsoTime(time) {
   return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
 }
-function callSignalWithContext({ signal, context, index, bar, symbol }) {
+async function callSignalWithContextAsync({ signal, context, index, bar, symbol }) {
   try {
-    return signal(context);
+    return await signal(context);
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -3038,7 +3038,7 @@ var LiveEngine = class {
     }
     if (!this.openPosition && !this.pendingOrder) {
       const context = this._signalContext(bar);
-      const rawSignal = callSignalWithContext({
+      const rawSignal = await callSignalWithContextAsync({
         signal: this.options.signal,
         context,
         index: context.index,

@@ -238,6 +238,9 @@ export interface SignalResult {
 }
 
 export type SignalFunction = (context: SignalContext) => SignalResult | null;
+export type AsyncSignalFunction = (
+  context: SignalContext
+) => SignalResult | null | Promise<SignalResult | null>;
 
 export interface PendingOrder {
   side: Side;
@@ -337,6 +340,11 @@ export interface BacktestOptions {
   strict?: boolean;
 }
 
+export interface BacktestAsyncOptions extends Omit<BacktestOptions, "signal"> {
+  signal: AsyncSignalFunction;
+  signalBudgetMs?: number;
+}
+
 export interface BacktestTickOptions {
   ticks: Tick[];
   symbol?: string;
@@ -357,6 +365,7 @@ export interface BacktestTickOptions {
   collectEqSeries?: boolean;
   collectReplay?: boolean;
   queueFillProbability?: number;
+  seed?: string;
   oco?: OCOOptions;
 }
 
@@ -542,6 +551,21 @@ export interface ArtifactPaths {
   metrics: string | null;
 }
 
+export interface LlmSignalOptions {
+  resolve: AsyncSignalFunction;
+  budgetMs?: number;
+  onError?: "skip" | "throw";
+}
+
+export interface LlmDecisionLogEntry {
+  index: number;
+  time?: number;
+  close?: number;
+  latencyMs: number;
+  result?: SignalResult | null;
+  error?: string;
+}
+
 /**
  * Run a candle-based backtest.
  *
@@ -550,6 +574,7 @@ export interface ArtifactPaths {
  * chart-friendly replay frames/events in `replay`.
  */
 export function backtest(options: BacktestOptions): BacktestResult;
+export function backtestAsync(options: BacktestAsyncOptions): Promise<BacktestResult>;
 export function backtestTicks(options: BacktestTickOptions): BacktestResult;
 export function backtestPortfolio(options: {
   systems: PortfolioSystem[];
@@ -580,6 +605,15 @@ export function buildMetrics(input: {
   estBarMs: number;
   eqSeries?: EquityPoint[];
 }): BacktestMetrics;
+
+export class LlmSignal {
+  constructor(options: LlmSignalOptions);
+  resolve: AsyncSignalFunction;
+  budgetMs: number;
+  onError: "skip" | "throw";
+  log: LlmDecisionLogEntry[];
+  signal(context: SignalContext): Promise<SignalResult | null>;
+}
 
 export function getHistoricalCandles(options?: HistoricalDataOptions): Promise<Candle[]>;
 export function backtestHistorical(options: BacktestHistoricalOptions): Promise<BacktestResult>;

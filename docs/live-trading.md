@@ -63,9 +63,34 @@ await engine.stop();
 Important behavior:
 
 - `signal()` is called with the same context shape as backtesting
+- `signal()` may be async; `LiveEngine` awaits the decision before normalizing it
 - market and limit/stop order lifecycles are tracked through broker events
 - state is persisted after fills, order updates, and equity updates
 - `getStatus()` returns runtime and risk state for health checks
+
+Async/model-backed signals can use `LlmSignal` from the main package:
+
+```js
+import { LlmSignal } from "tradelab";
+
+const llm = new LlmSignal({
+  budgetMs: 2000,
+  onError: "skip",
+  async resolve(context) {
+    // Call a model or agent here.
+    return null;
+  },
+});
+
+const engine = new LiveEngine({
+  symbol: "AAPL",
+  interval: "1m",
+  broker,
+  signal: llm.signal,
+});
+```
+
+`LlmSignal` caches one decision per bar, passes a no-lookahead candle view to `resolve()`, and records decisions in `llm.log`. Use `backtestAsync()` to test the same signal before running it live.
 
 ## `LiveOrchestrator` quick start
 

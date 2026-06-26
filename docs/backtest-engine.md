@@ -5,6 +5,7 @@
 This page covers the simulation layer:
 
 - `backtest(options)`
+- `backtestAsync(options)`
 - `backtestTicks(options)`
 - `backtestPortfolio(options)`
 - `walkForwardOptimize(options)`
@@ -21,6 +22,7 @@ The same `signal()` contract is used by `LiveEngine` in `tradelab/live`, so stra
 | Use case                                  | Function                |
 | ----------------------------------------- | ----------------------- |
 | One strategy on one candle series         | `backtest()`            |
+| Async or model-backed candle signal       | `backtestAsync()`       |
 | One strategy on tick or quote data        | `backtestTicks()`       |
 | Multiple symbols with one combined result | `backtestPortfolio()`   |
 | Rolling or anchored train/test validation | `walkForwardOptimize()` |
@@ -126,6 +128,43 @@ Return `null` for no trade, or a signal object:
 | `riskPct` or `riskFraction` | Overrides the global risk setting for that trade |
 
 Practical rule: return the smallest signal object that expresses the trade clearly. In many strategies that is just `side`, `stop`, and `rr`.
+
+## Async signals
+
+Use `backtestAsync()` when `signal()` returns a promise, such as an LLM call, agent decision, remote service lookup, or any async feature computation.
+
+```js
+import { backtestAsync, LlmSignal } from "tradelab";
+
+const llm = new LlmSignal({
+  budgetMs: 2000,
+  onError: "skip",
+  async resolve({ candles, bar }) {
+    const recent = candles.slice(-5);
+    return recent.every((c, i) => i === 0 || c.close >= recent[i - 1].close)
+      ? { side: "long", stop: bar.close * 0.98, rr: 2 }
+      : null;
+  },
+});
+
+const result = await backtestAsync({
+  candles,
+  signal: llm.signal,
+  signalBudgetMs: 3000,
+});
+```
+
+`backtestAsync()` returns the same result shape as `backtest()`. `signalBudgetMs` races each signal call against a per-bar deadline; set it to `0` or omit it to disable the timeout.
+
+`LlmSignal` is an optional wrapper for model-backed decisions:
+
+- caches by bar time, so repeated calls for one bar reuse the same decision
+- passes a no-lookahead candle view into `resolve()`
+- enforces `budgetMs` with the same timeout primitive as `backtestAsync()`
+- records each result or error in `llm.log`
+- returns `null` on errors by default, or rethrows with `onError: "throw"`
+
+Live trading also awaits async signals; see [live trading](live-trading.md).
 
 ### Optional per-trade hints
 
@@ -321,6 +360,7 @@ Use tick mode when you want event-driven fills while keeping the same result sha
 const result = backtestTicks({
   ticks,
   queueFillProbability: 0.5,
+  seed: "experiment-42",
   signal,
 });
 ```
@@ -329,6 +369,7 @@ const result = backtestTicks({
 
 - market entries fill on the next tick
 - limit orders can fill at the touch based on `queueFillProbability`
+- identical `seed` + data + options produce identical probabilistic limit-fill outcomes
 - stop exits fill at the stop and use the normal stop slippage model from `costs.slippageByKind.stop`
 - results still come back as `trades`, `positions`, `metrics`, `eqSeries`, and `replay`
 

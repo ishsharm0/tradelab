@@ -46,6 +46,7 @@ npm install tradelab
 | Area               | What you get                                                                             |
 | ------------------ | ---------------------------------------------------------------------------------------- |
 | **Engine**         | Candle and tick backtests with position sizing, exits, replay capture, and cost models   |
+| **Async signals**  | Promise-returning signals, `LlmSignal` caching/budgets, and live async signal support    |
 | **Portfolio**      | Multi-system shared-capital simulation with live capital locking and daily loss halts    |
 | **Walk-forward**   | Rolling and anchored train/test validation with parameter search and stability summaries |
 | **Live execution** | Live and paper engines with broker adapters, state persistence, and orchestration        |
@@ -254,11 +255,34 @@ import { backtestTicks } from "tradelab";
 const result = backtestTicks({
   ticks,
   queueFillProbability: 0.35,
+  seed: "research-run-1",
   signal,
 });
 ```
 
 Market entries fill on the next tick, limit orders can fill at the touch with configurable queue probability, and stop exits use the existing cost model with stop-specific slippage if you provide it in `costs.slippageByKind.stop`.
+
+Use `seed` to make probabilistic limit fills reproducible across repeated runs with the same data and options.
+
+## Async and LLM signals
+
+Use `backtestAsync()` when your signal returns a promise. `LlmSignal` wraps async model or agent calls with a per-bar budget, one-decision-per-bar cache, no-lookahead candle view, and a decision log.
+
+```js
+import { backtestAsync, LlmSignal } from "tradelab";
+
+const llm = new LlmSignal({
+  budgetMs: 2000,
+  async resolve({ candles, bar }) {
+    const closes = candles.map((c) => c.close);
+    return closes.at(-1) > closes.at(-5) ? { side: "long", stop: bar.close * 0.98, rr: 2 } : null;
+  },
+});
+
+const result = await backtestAsync({ candles, signal: llm.signal, signalBudgetMs: 3000 });
+```
+
+`LiveEngine` awaits async signals too, so the same `llm.signal` can move from research into paper or live execution.
 
 ---
 
@@ -396,6 +420,7 @@ You can also point `--strategy` at a local module that exports `default(args)`, 
 ```bash
 node examples/emaCross.js
 node examples/yahooEmaCross.js SPY 1d 1y
+node examples/llmSignal.js
 ```
 
 The examples are a good place to start if you want something runnable before wiring the package into your own strategy code.
@@ -408,6 +433,7 @@ The examples are a good place to start if you want something runnable before wir
 
 ```js
 import { backtest, getHistoricalCandles, ema } from "tradelab";
+import { backtestAsync, LlmSignal } from "tradelab";
 import { fetchHistorical } from "tradelab/data";
 import { LiveEngine, PaperEngine } from "tradelab/live";
 import { rsi, macd, bollinger, vwap, supertrend } from "tradelab/ta";
@@ -417,6 +443,7 @@ import { rsi, macd, bollinger, vwap, supertrend } from "tradelab/ta";
 
 ```js
 const { backtest, getHistoricalCandles, ema } = require("tradelab");
+const { backtestAsync, LlmSignal } = require("tradelab");
 const { fetchHistorical } = require("tradelab/data");
 const { LiveEngine, PaperEngine } = require("tradelab/live");
 const { rsi, macd, bollinger, vwap, supertrend } = require("tradelab/ta");

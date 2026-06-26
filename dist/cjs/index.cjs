@@ -31,8 +31,10 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 var index_exports = {};
 __export(index_exports, {
   BIG_NUMBER: () => BIG_NUMBER,
+  LlmSignal: () => LlmSignal,
   atr: () => atr,
   backtest: () => backtest,
+  backtestAsync: () => backtestAsync,
   backtestHistorical: () => backtestHistorical,
   backtestPortfolio: () => backtestPortfolio,
   backtestTicks: () => backtestTicks,
@@ -1738,432 +1740,12 @@ function backtest(rawOptions) {
   };
 }
 
-// src/engine/backtestTicks.js
+// src/engine/barSystemRunner.js
 function asNumber2(value) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : null;
 }
-function describeValue2(value) {
-  if (Array.isArray(value)) return `array(length=${value.length})`;
-  if (value === null) return "null";
-  return typeof value;
-}
-function formatIsoTime2(time) {
-  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
-}
-function callSignalWithContext2({ signal, context, index, bar, symbol }) {
-  try {
-    return signal(context);
-  } catch (error) {
-    const cause = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `signal() threw at index=${index}, time=${formatIsoTime2(bar?.time)}, symbol=${symbol}: ${cause}`
-    );
-  }
-}
-function normalizeSide2(value) {
-  if (value === "long" || value === "buy") return "long";
-  if (value === "short" || value === "sell") return "short";
-  return null;
-}
-function normalizeTick(tick) {
-  const time = Number(tick?.time);
-  const bid = asNumber2(tick?.bid);
-  const ask = asNumber2(tick?.ask);
-  const last = asNumber2(tick?.price ?? tick?.last ?? tick?.close);
-  const mid = bid !== null && ask !== null ? (bid + ask) / 2 : last ?? bid ?? ask;
-  if (!Number.isFinite(time) || !Number.isFinite(mid)) return null;
-  const prices = [asNumber2(tick?.low), asNumber2(tick?.high), bid, ask, last, mid].filter(
-    Number.isFinite
-  );
-  const low = prices.length ? Math.min(...prices) : mid;
-  const high = prices.length ? Math.max(...prices) : mid;
-  return {
-    ...tick,
-    time,
-    open: mid,
-    high,
-    low,
-    close: mid,
-    volume: asNumber2(tick?.size ?? tick?.volume) ?? void 0
-  };
-}
-function normalizeSignal2(signal, bar, fallbackR) {
-  if (!signal) return null;
-  const side = normalizeSide2(signal.side ?? signal.direction ?? signal.action);
-  if (!side) return null;
-  const hasExplicitEntry = signal.entry !== void 0 || signal.limit !== void 0 || signal.price !== void 0;
-  const entry = asNumber2(signal.entry ?? signal.limit ?? signal.price) ?? asNumber2(bar?.close);
-  const stop = asNumber2(signal.stop ?? signal.stopLoss ?? signal.sl);
-  if (entry === null || stop === null) return null;
-  const risk = Math.abs(entry - stop);
-  if (!(risk > 0)) return null;
-  let takeProfit = asNumber2(signal.takeProfit ?? signal.target ?? signal.tp);
-  const rrHint = asNumber2(signal._rr ?? signal.rr);
-  const targetR = rrHint ?? fallbackR;
-  if (takeProfit === null && Number.isFinite(targetR) && targetR > 0) {
-    takeProfit = side === "long" ? entry + risk * targetR : entry - risk * targetR;
-  }
-  if (takeProfit === null) return null;
-  return {
-    ...signal,
-    side,
-    entry,
-    stop,
-    takeProfit,
-    qty: asNumber2(signal.qty ?? signal.size),
-    riskPct: asNumber2(signal.riskPct),
-    riskFraction: asNumber2(signal.riskFraction),
-    orderType: hasExplicitEntry ? "limit" : "market"
-  };
-}
-function equityPoint2(time, equity) {
-  return { time, timestamp: time, equity };
-}
-function xmur3(seed) {
-  let hash = 1779033703 ^ seed.length;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = Math.imul(hash ^ seed.charCodeAt(index), 3432918353);
-    hash = hash << 13 | hash >>> 19;
-  }
-  return () => {
-    hash = Math.imul(hash ^ hash >>> 16, 2246822507);
-    hash = Math.imul(hash ^ hash >>> 13, 3266489909);
-    return (hash ^= hash >>> 16) >>> 0;
-  };
-}
-function mulberry32(seed) {
-  let state = seed >>> 0;
-  return () => {
-    state = state + 1831565813 >>> 0;
-    let value = Math.imul(state ^ state >>> 15, state | 1);
-    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
-    return ((value ^ value >>> 14) >>> 0) / 4294967296;
-  };
-}
-function seededUnitInterval(seedParts) {
-  const seed = seedParts.map((part) => String(part)).join("|");
-  const seedFn = xmur3(seed);
-  return mulberry32(seedFn())();
-}
-function deterministicFill(probability, seedParts) {
-  if (probability >= 1) return true;
-  if (probability <= 0) return false;
-  const normalized = seededUnitInterval(seedParts);
-  return normalized <= probability;
-}
-function backtestTicks({
-  ticks = [],
-  symbol = "UNKNOWN",
-  equity = 1e4,
-  riskPct = 1,
-  signal,
-  interval,
-  range,
-  slippageBps = 1,
-  feeBps = 0,
-  costs = null,
-  finalTP_R = 3,
-  maxDailyLossPct = 0,
-  dailyMaxTrades = 0,
-  qtyStep = 1e-3,
-  minQty = 1e-3,
-  maxLeverage = 2,
-  collectEqSeries = true,
-  collectReplay = true,
-  queueFillProbability = 1,
-  oco = {}
-} = {}) {
-  if (!Array.isArray(ticks) || ticks.length === 0) {
-    throw new Error(
-      `backtestTicks() requires a non-empty ticks array, got ${describeValue2(ticks)}`
-    );
-  }
-  if (typeof signal !== "function") {
-    throw new Error(`backtestTicks() requires a signal function, got ${describeValue2(signal)}`);
-  }
-  const normalizedTicks = ticks.map(normalizeTick).filter(Boolean);
-  if (!normalizedTicks.length) {
-    throw new Error(
-      `backtestTicks() could not normalize any ticks from ${ticks.length} input rows`
-    );
-  }
-  const ocoOptions = {
-    mode: "intrabar",
-    tieBreak: "pessimistic",
-    ...oco
-  };
-  const trades = [];
-  const eqSeries = collectEqSeries ? [equityPoint2(normalizedTicks[0].time, equity)] : [];
-  const replayFrames = collectReplay ? [] : [];
-  const replayEvents = collectReplay ? [] : [];
-  const history = [];
-  let open = null;
-  let pending = null;
-  let currentEquity = equity;
-  let dayKey = null;
-  let dayStartEquity = equity;
-  let dayPnl = 0;
-  let dayTrades = 0;
-  let tradeIdCounter = 0;
-  function markedEquity(tick) {
-    if (!open) return currentEquity;
-    const direction = open.side === "long" ? 1 : -1;
-    return currentEquity + (tick.close - open.entryFill) * direction * open.size;
-  }
-  function recordFrame(tick) {
-    const equityNow = markedEquity(tick);
-    if (collectEqSeries) {
-      eqSeries.push(equityPoint2(tick.time, equityNow));
-    }
-    if (collectReplay) {
-      replayFrames.push({
-        t: new Date(tick.time).toISOString(),
-        price: tick.close,
-        equity: equityNow,
-        posSide: open?.side ?? null,
-        posSize: open?.size ?? 0
-      });
-    }
-  }
-  function closePosition(tick, reason, rawPrice, fillKind) {
-    if (!open) return;
-    const exitSide = open.side === "long" ? "short" : "long";
-    const { price, feeTotal } = applyFill(rawPrice, exitSide, {
-      slippageBps,
-      feeBps,
-      kind: fillKind,
-      qty: open.size,
-      costs
-    });
-    const direction = open.side === "long" ? 1 : -1;
-    const grossPnl = (price - open.entryFill) * direction * open.size;
-    const pnl = grossPnl - (open.entryFeeTotal || 0) - feeTotal;
-    currentEquity += pnl;
-    dayPnl += pnl;
-    const trade = {
-      ...open,
-      exit: {
-        price,
-        time: tick.time,
-        reason,
-        pnl
-      }
-    };
-    trades.push(trade);
-    if (collectReplay) {
-      replayEvents.push({
-        t: new Date(tick.time).toISOString(),
-        price,
-        type: reason === "TP" ? "tp" : reason === "SL" ? "sl" : "exit",
-        side: open.side,
-        size: open.size,
-        tradeId: open.id,
-        reason,
-        pnl
-      });
-    }
-    open = null;
-  }
-  for (let index = 0; index < normalizedTicks.length; index += 1) {
-    const tick = normalizedTicks[index];
-    history.push(tick);
-    const currentDayKey = dayKeyUTC2(tick.time);
-    if (dayKey === null || currentDayKey !== dayKey) {
-      dayKey = currentDayKey;
-      dayStartEquity = currentEquity;
-      dayPnl = 0;
-      dayTrades = 0;
-    }
-    if (open) {
-      const { hit, px } = ocoExitCheck({
-        side: open.side,
-        stop: open.stop,
-        tp: open.takeProfit,
-        bar: tick,
-        mode: "intrabar",
-        tieBreak: ocoOptions.tieBreak
-      });
-      if (hit) {
-        closePosition(tick, hit, px, hit === "TP" ? "limit" : "stop");
-      }
-    }
-    if (!open && pending && index > pending.createdAtIndex) {
-      if (pending.orderType === "market") {
-        const rawSize = pending.fixedQty ?? calculatePositionSize({
-          equity: currentEquity,
-          entry: tick.close,
-          stop: pending.stop,
-          riskFraction: pending.riskFrac,
-          qtyStep,
-          minQty,
-          maxLeverage
-        });
-        const size = roundStep2(rawSize, qtyStep);
-        if (size >= minQty) {
-          const { price, feeTotal } = applyFill(tick.close, pending.side, {
-            slippageBps,
-            feeBps,
-            kind: "market",
-            qty: size,
-            costs
-          });
-          open = {
-            symbol,
-            id: ++tradeIdCounter,
-            side: pending.side,
-            entry: tick.close,
-            stop: pending.stop,
-            takeProfit: pending.takeProfit,
-            size,
-            openTime: tick.time,
-            entryFill: price,
-            entryFeeTotal: feeTotal,
-            _initRisk: Math.abs(tick.close - pending.stop)
-          };
-          dayTrades += 1;
-          if (collectReplay) {
-            replayEvents.push({
-              t: new Date(tick.time).toISOString(),
-              price,
-              type: "entry",
-              side: open.side,
-              size,
-              tradeId: open.id
-            });
-          }
-        }
-        pending = null;
-      } else {
-        const touched = pending.side === "long" ? tick.low <= pending.entry : tick.high >= pending.entry;
-        if (touched && deterministicFill(queueFillProbability, [
-          symbol,
-          tick.time,
-          pending.entry,
-          pending.stop,
-          pending.side
-        ])) {
-          const rawSize = pending.fixedQty ?? calculatePositionSize({
-            equity: currentEquity,
-            entry: pending.entry,
-            stop: pending.stop,
-            riskFraction: pending.riskFrac,
-            qtyStep,
-            minQty,
-            maxLeverage
-          });
-          const size = roundStep2(rawSize, qtyStep);
-          if (size >= minQty) {
-            const { price, feeTotal } = applyFill(pending.entry, pending.side, {
-              slippageBps,
-              feeBps,
-              kind: "limit",
-              qty: size,
-              costs
-            });
-            open = {
-              symbol,
-              id: ++tradeIdCounter,
-              side: pending.side,
-              entry: pending.entry,
-              stop: pending.stop,
-              takeProfit: pending.takeProfit,
-              size,
-              openTime: tick.time,
-              entryFill: price,
-              entryFeeTotal: feeTotal,
-              _initRisk: Math.abs(pending.entry - pending.stop)
-            };
-            dayTrades += 1;
-            if (collectReplay) {
-              replayEvents.push({
-                t: new Date(tick.time).toISOString(),
-                price,
-                type: "entry",
-                side: open.side,
-                size,
-                tradeId: open.id
-              });
-            }
-          }
-          pending = null;
-        }
-      }
-    }
-    const maxLossDollars = Math.abs(maxDailyLossPct) / 100 * dayStartEquity;
-    const dailyLossHit = maxDailyLossPct > 0 && dayPnl <= -maxLossDollars;
-    const dailyTradeCapHit = dailyMaxTrades > 0 && dayTrades >= dailyMaxTrades;
-    if (!open && !pending && !dailyLossHit && !dailyTradeCapHit) {
-      const nextSignal = normalizeSignal2(
-        callSignalWithContext2({
-          signal,
-          context: {
-            candles: history,
-            index,
-            bar: tick,
-            equity: markedEquity(tick),
-            openPosition: open,
-            pendingOrder: pending
-          },
-          index,
-          bar: tick,
-          symbol
-        }),
-        tick,
-        finalTP_R
-      );
-      if (nextSignal) {
-        pending = {
-          side: nextSignal.side,
-          entry: nextSignal.entry,
-          stop: nextSignal.stop,
-          takeProfit: nextSignal.takeProfit,
-          fixedQty: nextSignal.qty,
-          riskFrac: Number.isFinite(nextSignal.riskFraction) ? nextSignal.riskFraction : Number.isFinite(nextSignal.riskPct) ? nextSignal.riskPct / 100 : riskPct / 100,
-          orderType: nextSignal.orderType,
-          createdAtIndex: index
-        };
-      }
-    }
-    recordFrame(tick);
-  }
-  if (open) {
-    const lastTick = normalizedTicks[normalizedTicks.length - 1];
-    closePosition(lastTick, "EOT", lastTick.close, "market");
-    recordFrame(lastTick);
-  }
-  const positions = trades;
-  const metrics = buildMetrics({
-    closed: trades,
-    equityStart: equity,
-    equityFinal: currentEquity,
-    candles: normalizedTicks,
-    estBarMs: normalizedTicks.length > 1 ? Math.max(1, normalizedTicks[1].time - normalizedTicks[0].time) : 1,
-    eqSeries,
-    interval
-  });
-  return {
-    symbol,
-    interval,
-    range,
-    trades,
-    positions,
-    openPositions: [],
-    metrics,
-    eqSeries,
-    replay: {
-      frames: replayFrames,
-      events: replayEvents
-    }
-  };
-}
-
-// src/engine/barSystemRunner.js
-function asNumber3(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-function equityPoint3(time, equity, extra = {}) {
+function equityPoint2(time, equity, extra = {}) {
   return { time, timestamp: time, equity, ...extra };
 }
 function isArrayIndexKey2(property) {
@@ -2183,21 +1765,31 @@ function strictHistoryView2(candles, currentIndex) {
     }
   });
 }
-function describeValue3(value) {
+function describeValue2(value) {
   if (Array.isArray(value)) return `array(length=${value.length})`;
   if (value === null) return "null";
   return typeof value;
 }
-function formatIsoTime3(time) {
+function formatIsoTime2(time) {
   return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
 }
-function callSignalWithContext3({ signal, context, index, bar, symbol }) {
+function callSignalWithContext2({ signal, context, index, bar, symbol }) {
   try {
     return signal(context);
   } catch (error) {
     const cause = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `signal() threw at index=${index}, time=${formatIsoTime3(bar?.time)}, symbol=${symbol}: ${cause}`
+      `signal() threw at index=${index}, time=${formatIsoTime2(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
+}
+async function callSignalWithContextAsync({ signal, context, index, bar, symbol }) {
+  try {
+    return await signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime2(bar?.time)}, symbol=${symbol}: ${cause}`
     );
   }
 }
@@ -2221,22 +1813,22 @@ function snapshotOpenPosition2(open, markPrice) {
     _initRisk: open._initRisk
   };
 }
-function normalizeSide3(value) {
+function normalizeSide2(value) {
   if (value === "long" || value === "buy") return "long";
   if (value === "short" || value === "sell") return "short";
   return null;
 }
-function normalizeSignal3(signal, bar, fallbackR) {
+function normalizeSignal2(signal, bar, fallbackR) {
   if (!signal) return null;
-  const side = normalizeSide3(signal.side ?? signal.direction ?? signal.action);
+  const side = normalizeSide2(signal.side ?? signal.direction ?? signal.action);
   if (!side) return null;
-  const entry = asNumber3(signal.entry ?? signal.limit ?? signal.price) ?? asNumber3(bar?.close);
-  const stop = asNumber3(signal.stop ?? signal.stopLoss ?? signal.sl);
+  const entry = asNumber2(signal.entry ?? signal.limit ?? signal.price) ?? asNumber2(bar?.close);
+  const stop = asNumber2(signal.stop ?? signal.stopLoss ?? signal.sl);
   if (entry === null || stop === null) return null;
   const risk = Math.abs(entry - stop);
   if (!(risk > 0)) return null;
-  let takeProfit = asNumber3(signal.takeProfit ?? signal.target ?? signal.tp);
-  const rrHint = asNumber3(signal._rr ?? signal.rr);
+  let takeProfit = asNumber2(signal.takeProfit ?? signal.target ?? signal.tp);
+  const rrHint = asNumber2(signal._rr ?? signal.rr);
   const targetR = rrHint ?? fallbackR;
   if (takeProfit === null && Number.isFinite(targetR) && targetR > 0) {
     takeProfit = side === "long" ? entry + risk * targetR : entry - risk * targetR;
@@ -2248,11 +1840,11 @@ function normalizeSignal3(signal, bar, fallbackR) {
     entry,
     stop,
     takeProfit,
-    qty: asNumber3(signal.qty ?? signal.size),
-    riskPct: asNumber3(signal.riskPct),
-    riskFraction: asNumber3(signal.riskFraction),
+    qty: asNumber2(signal.qty ?? signal.size),
+    riskPct: asNumber2(signal.riskPct),
+    riskFraction: asNumber2(signal.riskFraction),
     _rr: rrHint ?? signal._rr,
-    _initRisk: asNumber3(signal._initRisk) ?? signal._initRisk
+    _initRisk: asNumber2(signal._initRisk) ?? signal._initRisk
   };
 }
 function mergeOptions2(options) {
@@ -2335,14 +1927,14 @@ var BarSystemRunner = class {
     const { candles, signal } = this.options;
     if (!Array.isArray(candles) || candles.length === 0) {
       throw new Error(
-        `backtestPortfolio() requires each system to include non-empty candles, got ${describeValue3(
+        `backtestPortfolio() requires each system to include non-empty candles, got ${describeValue2(
           candles
         )} for ${this.options.symbol}`
       );
     }
     if (typeof signal !== "function") {
       throw new Error(
-        `backtestPortfolio() requires each system to include a signal function, got ${describeValue3(
+        `backtestPortfolio() requires each system to include a signal function, got ${describeValue2(
           signal
         )} for ${this.options.symbol}`
       );
@@ -2365,7 +1957,7 @@ var BarSystemRunner = class {
     this.atrValues = needAtr ? atr(candles, atrSourcePeriod) : null;
     this.wantEqSeries = Boolean(this.options.collectEqSeries);
     this.wantReplay = Boolean(this.options.collectReplay);
-    this.eqSeries = this.wantEqSeries ? [equityPoint3(candles[0].time, this.currentEquity)] : [];
+    this.eqSeries = this.wantEqSeries ? [equityPoint2(candles[0].time, this.currentEquity)] : [];
     this.replayFrames = this.wantReplay ? [] : [];
     this.replayEvents = this.wantReplay ? [] : [];
     this.startIndex = Math.min(Math.max(1, this.options.warmupBars), candles.length);
@@ -2398,7 +1990,7 @@ var BarSystemRunner = class {
   }
   recordFrame(bar, extraFrame = {}) {
     if (this.wantEqSeries) {
-      this.eqSeries.push(equityPoint3(bar.time, this.currentEquity));
+      this.eqSeries.push(equityPoint2(bar.time, this.currentEquity));
     }
     if (this.wantReplay) {
       this.replayFrames.push({
@@ -2420,7 +2012,7 @@ var BarSystemRunner = class {
     this.currentEquity += pnl;
     this.dayPnl += pnl;
     if (this.wantEqSeries) {
-      this.eqSeries.push(equityPoint3(time, this.currentEquity));
+      this.eqSeries.push(equityPoint2(time, this.currentEquity));
     }
     const remaining = openPos.size - qty;
     const eventType = reason === "SCALE" ? "scale-out" : reason === "TP" ? "tp" : reason === "SL" ? "sl" : reason === "EOD" ? "eod" : remaining <= 0 ? "exit" : "scale-out";
@@ -2593,8 +2185,8 @@ var BarSystemRunner = class {
       pendingOrder: this.pending
     };
   }
-  step({ signalEquity, canTrade = true, resolveEntrySize } = {}) {
-    if (!this.hasNext()) return null;
+  _preSignal({ signalEquity, canTrade = true, resolveEntrySize } = {}) {
+    if (!this.hasNext()) return { handled: true, bar: null };
     const bar = this.candles[this.index];
     this.history.push(bar);
     this.lastBar = bar;
@@ -2828,7 +2420,7 @@ var BarSystemRunner = class {
         }
       } else if (this.options.entryChase.enabled) {
         const elapsedBars = this.index - (this.pending.startedAtIndex ?? this.index);
-        const midpoint = asNumber3(this.pending.meta?._imb?.mid);
+        const midpoint = asNumber2(this.pending.meta?._imb?.mid);
         if (!this.pending._chasedCE && midpoint !== null && elapsedBars >= Math.max(1, this.options.entryChase.afterBars)) {
           this.pending.entry = midpoint;
           this.pending._chasedCE = true;
@@ -2857,48 +2449,78 @@ var BarSystemRunner = class {
       if (this.cooldown > 0) this.cooldown -= 1;
       this.recordFrame(bar);
       this.index += 1;
-      return bar;
+      return { handled: true, bar };
     }
     if (!canTrade || dailyLossHit || dailyTradeCapHit) {
       this.pending = null;
       this.recordFrame(bar);
       this.index += 1;
-      return bar;
+      return { handled: true, bar };
     }
-    if (!this.pending) {
-      const rawSignal = callSignalWithContext3({
-        signal: this.options.signal,
-        context: this.buildSignalContext(this.index, bar, signalEquity),
-        index: this.index,
-        bar,
-        symbol: this.symbol
-      });
-      const nextSignal = normalizeSignal3(rawSignal, bar, this.options.finalTP_R);
-      if (nextSignal) {
-        const signalRiskFraction = Number.isFinite(nextSignal.riskFraction) ? nextSignal.riskFraction : Number.isFinite(nextSignal.riskPct) ? nextSignal.riskPct / 100 : this.options.riskPct / 100;
-        const expiryBars = nextSignal._entryExpiryBars ?? 5;
-        this.pending = {
-          side: nextSignal.side,
-          entry: nextSignal.entry,
-          stop: nextSignal.stop,
-          tp: nextSignal.takeProfit,
-          riskFrac: signalRiskFraction,
-          fixedQty: nextSignal.qty,
-          expiresAt: this.index + Math.max(1, expiryBars),
-          startedAtIndex: this.index,
-          meta: nextSignal,
-          plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop)
-        };
-        if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
-          if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
-            this.pending = null;
-          }
+    if (this.pending) {
+      this.recordFrame(bar);
+      this.index += 1;
+      return { handled: true, bar };
+    }
+    return {
+      handled: false,
+      bar,
+      trigger,
+      signalEquity,
+      resolveEntrySize
+    };
+  }
+  _applyRawSignal(rawSignal, pre) {
+    const { bar, trigger, signalEquity, resolveEntrySize } = pre;
+    const nextSignal = normalizeSignal2(rawSignal, bar, this.options.finalTP_R);
+    if (nextSignal) {
+      const signalRiskFraction = Number.isFinite(nextSignal.riskFraction) ? nextSignal.riskFraction : Number.isFinite(nextSignal.riskPct) ? nextSignal.riskPct / 100 : this.options.riskPct / 100;
+      const expiryBars = nextSignal._entryExpiryBars ?? 5;
+      this.pending = {
+        side: nextSignal.side,
+        entry: nextSignal.entry,
+        stop: nextSignal.stop,
+        tp: nextSignal.takeProfit,
+        riskFrac: signalRiskFraction,
+        fixedQty: nextSignal.qty,
+        expiresAt: this.index + Math.max(1, expiryBars),
+        startedAtIndex: this.index,
+        meta: nextSignal,
+        plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop)
+      };
+      if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
+        if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
+          this.pending = null;
         }
       }
     }
     this.recordFrame(bar);
     this.index += 1;
     return bar;
+  }
+  step(options = {}) {
+    const pre = this._preSignal(options);
+    if (pre.handled) return pre.bar;
+    const rawSignal = callSignalWithContext2({
+      signal: this.options.signal,
+      context: this.buildSignalContext(this.index, pre.bar, pre.signalEquity),
+      index: this.index,
+      bar: pre.bar,
+      symbol: this.symbol
+    });
+    return this._applyRawSignal(rawSignal, pre);
+  }
+  async stepAsync(options = {}) {
+    const pre = this._preSignal(options);
+    if (pre.handled) return pre.bar;
+    const rawSignal = await callSignalWithContextAsync({
+      signal: this.options.signal,
+      context: this.buildSignalContext(this.index, pre.bar, pre.signalEquity),
+      index: this.index,
+      bar: pre.bar,
+      symbol: this.symbol
+    });
+    return this._applyRawSignal(rawSignal, pre);
   }
   buildResult() {
     const metrics = buildMetrics({
@@ -2911,7 +2533,7 @@ var BarSystemRunner = class {
       interval: this.options.interval
     });
     const positions = this.closed.filter((trade) => trade.exit.reason !== "SCALE");
-    const lastPrice = asNumber3(this.candles[this.candles.length - 1]?.close);
+    const lastPrice = asNumber2(this.candles[this.candles.length - 1]?.close);
     const openPositions = this.open ? [snapshotOpenPosition2(this.open, lastPrice ?? this.open.entryFill ?? this.open.entry)] : [];
     return {
       symbol: this.options.symbol,
@@ -2937,6 +2559,468 @@ function defaultSystemCap(totalEquity, capPct, maxAllocation, maxAllocationPct) 
     limits.push(totalEquity * maxAllocationPct);
   }
   return limits.length ? Math.min(...limits) : Math.max(0, totalEquity);
+}
+
+// src/engine/asyncSignal.js
+var BudgetExceededError = class extends Error {
+  constructor(ms) {
+    super(`signal() exceeded its ${ms}ms per-bar budget`);
+    this.name = "BudgetExceededError";
+    this.budgetMs = ms;
+  }
+};
+function withBudget(promise, budgetMs) {
+  if (!budgetMs || budgetMs <= 0) return Promise.resolve(promise);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new BudgetExceededError(budgetMs)), budgetMs);
+    Promise.resolve(promise).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+// src/engine/backtestAsync.js
+async function backtestAsync(rawOptions = {}) {
+  const budgetMs = rawOptions.signalBudgetMs ?? 0;
+  const userSignal = rawOptions.signal;
+  const budgetedSignal = (context) => withBudget(
+    Promise.resolve().then(() => userSignal(context)),
+    budgetMs
+  );
+  const runner = new BarSystemRunner({ ...rawOptions, signal: budgetedSignal });
+  while (runner.hasNext()) {
+    await runner.stepAsync({ signalEquity: runner.getMarkedEquity() });
+  }
+  return runner.buildResult();
+}
+
+// src/engine/backtestTicks.js
+function asNumber3(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+function describeValue3(value) {
+  if (Array.isArray(value)) return `array(length=${value.length})`;
+  if (value === null) return "null";
+  return typeof value;
+}
+function formatIsoTime3(time) {
+  return Number.isFinite(time) ? new Date(time).toISOString() : "invalid-time";
+}
+function callSignalWithContext3({ signal, context, index, bar, symbol }) {
+  try {
+    return signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime3(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
+}
+function normalizeSide3(value) {
+  if (value === "long" || value === "buy") return "long";
+  if (value === "short" || value === "sell") return "short";
+  return null;
+}
+function normalizeTick(tick) {
+  const time = Number(tick?.time);
+  const bid = asNumber3(tick?.bid);
+  const ask = asNumber3(tick?.ask);
+  const last = asNumber3(tick?.price ?? tick?.last ?? tick?.close);
+  const mid = bid !== null && ask !== null ? (bid + ask) / 2 : last ?? bid ?? ask;
+  if (!Number.isFinite(time) || !Number.isFinite(mid)) return null;
+  const prices = [asNumber3(tick?.low), asNumber3(tick?.high), bid, ask, last, mid].filter(
+    Number.isFinite
+  );
+  const low = prices.length ? Math.min(...prices) : mid;
+  const high = prices.length ? Math.max(...prices) : mid;
+  return {
+    ...tick,
+    time,
+    open: mid,
+    high,
+    low,
+    close: mid,
+    volume: asNumber3(tick?.size ?? tick?.volume) ?? void 0
+  };
+}
+function normalizeSignal3(signal, bar, fallbackR) {
+  if (!signal) return null;
+  const side = normalizeSide3(signal.side ?? signal.direction ?? signal.action);
+  if (!side) return null;
+  const hasExplicitEntry = signal.entry !== void 0 || signal.limit !== void 0 || signal.price !== void 0;
+  const entry = asNumber3(signal.entry ?? signal.limit ?? signal.price) ?? asNumber3(bar?.close);
+  const stop = asNumber3(signal.stop ?? signal.stopLoss ?? signal.sl);
+  if (entry === null || stop === null) return null;
+  const risk = Math.abs(entry - stop);
+  if (!(risk > 0)) return null;
+  let takeProfit = asNumber3(signal.takeProfit ?? signal.target ?? signal.tp);
+  const rrHint = asNumber3(signal._rr ?? signal.rr);
+  const targetR = rrHint ?? fallbackR;
+  if (takeProfit === null && Number.isFinite(targetR) && targetR > 0) {
+    takeProfit = side === "long" ? entry + risk * targetR : entry - risk * targetR;
+  }
+  if (takeProfit === null) return null;
+  return {
+    ...signal,
+    side,
+    entry,
+    stop,
+    takeProfit,
+    qty: asNumber3(signal.qty ?? signal.size),
+    riskPct: asNumber3(signal.riskPct),
+    riskFraction: asNumber3(signal.riskFraction),
+    orderType: hasExplicitEntry ? "limit" : "market"
+  };
+}
+function equityPoint3(time, equity) {
+  return { time, timestamp: time, equity };
+}
+function xmur3(seed) {
+  let hash = 1779033703 ^ seed.length;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = Math.imul(hash ^ seed.charCodeAt(index), 3432918353);
+    hash = hash << 13 | hash >>> 19;
+  }
+  return () => {
+    hash = Math.imul(hash ^ hash >>> 16, 2246822507);
+    hash = Math.imul(hash ^ hash >>> 13, 3266489909);
+    return (hash ^= hash >>> 16) >>> 0;
+  };
+}
+function mulberry32(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = state + 1831565813 >>> 0;
+    let value = Math.imul(state ^ state >>> 15, state | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
+function seededUnitInterval(seedParts) {
+  const seed = seedParts.map((part) => String(part)).join("|");
+  const seedFn = xmur3(seed);
+  return mulberry32(seedFn())();
+}
+function deterministicFill(probability, seedParts) {
+  if (probability >= 1) return true;
+  if (probability <= 0) return false;
+  const normalized = seededUnitInterval(seedParts);
+  return normalized <= probability;
+}
+function backtestTicks({
+  ticks = [],
+  symbol = "UNKNOWN",
+  equity = 1e4,
+  riskPct = 1,
+  signal,
+  interval,
+  range,
+  slippageBps = 1,
+  feeBps = 0,
+  costs = null,
+  finalTP_R = 3,
+  maxDailyLossPct = 0,
+  dailyMaxTrades = 0,
+  qtyStep = 1e-3,
+  minQty = 1e-3,
+  maxLeverage = 2,
+  collectEqSeries = true,
+  collectReplay = true,
+  queueFillProbability = 1,
+  seed = "tradelab-ticks",
+  oco = {}
+} = {}) {
+  if (!Array.isArray(ticks) || ticks.length === 0) {
+    throw new Error(
+      `backtestTicks() requires a non-empty ticks array, got ${describeValue3(ticks)}`
+    );
+  }
+  if (typeof signal !== "function") {
+    throw new Error(`backtestTicks() requires a signal function, got ${describeValue3(signal)}`);
+  }
+  const normalizedTicks = ticks.map(normalizeTick).filter(Boolean);
+  if (!normalizedTicks.length) {
+    throw new Error(
+      `backtestTicks() could not normalize any ticks from ${ticks.length} input rows`
+    );
+  }
+  const ocoOptions = {
+    mode: "intrabar",
+    tieBreak: "pessimistic",
+    ...oco
+  };
+  const trades = [];
+  const eqSeries = collectEqSeries ? [equityPoint3(normalizedTicks[0].time, equity)] : [];
+  const replayFrames = collectReplay ? [] : [];
+  const replayEvents = collectReplay ? [] : [];
+  const history = [];
+  let open = null;
+  let pending = null;
+  let currentEquity = equity;
+  let dayKey = null;
+  let dayStartEquity = equity;
+  let dayPnl = 0;
+  let dayTrades = 0;
+  let tradeIdCounter = 0;
+  function markedEquity(tick) {
+    if (!open) return currentEquity;
+    const direction = open.side === "long" ? 1 : -1;
+    return currentEquity + (tick.close - open.entryFill) * direction * open.size;
+  }
+  function recordFrame(tick) {
+    const equityNow = markedEquity(tick);
+    if (collectEqSeries) {
+      eqSeries.push(equityPoint3(tick.time, equityNow));
+    }
+    if (collectReplay) {
+      replayFrames.push({
+        t: new Date(tick.time).toISOString(),
+        price: tick.close,
+        equity: equityNow,
+        posSide: open?.side ?? null,
+        posSize: open?.size ?? 0
+      });
+    }
+  }
+  function closePosition(tick, reason, rawPrice, fillKind) {
+    if (!open) return;
+    const exitSide = open.side === "long" ? "short" : "long";
+    const { price, feeTotal } = applyFill(rawPrice, exitSide, {
+      slippageBps,
+      feeBps,
+      kind: fillKind,
+      qty: open.size,
+      costs
+    });
+    const direction = open.side === "long" ? 1 : -1;
+    const grossPnl = (price - open.entryFill) * direction * open.size;
+    const pnl = grossPnl - (open.entryFeeTotal || 0) - feeTotal;
+    currentEquity += pnl;
+    dayPnl += pnl;
+    const trade = {
+      ...open,
+      exit: {
+        price,
+        time: tick.time,
+        reason,
+        pnl
+      }
+    };
+    trades.push(trade);
+    if (collectReplay) {
+      replayEvents.push({
+        t: new Date(tick.time).toISOString(),
+        price,
+        type: reason === "TP" ? "tp" : reason === "SL" ? "sl" : "exit",
+        side: open.side,
+        size: open.size,
+        tradeId: open.id,
+        reason,
+        pnl
+      });
+    }
+    open = null;
+  }
+  for (let index = 0; index < normalizedTicks.length; index += 1) {
+    const tick = normalizedTicks[index];
+    history.push(tick);
+    const currentDayKey = dayKeyUTC2(tick.time);
+    if (dayKey === null || currentDayKey !== dayKey) {
+      dayKey = currentDayKey;
+      dayStartEquity = currentEquity;
+      dayPnl = 0;
+      dayTrades = 0;
+    }
+    if (open) {
+      const { hit, px } = ocoExitCheck({
+        side: open.side,
+        stop: open.stop,
+        tp: open.takeProfit,
+        bar: tick,
+        mode: "intrabar",
+        tieBreak: ocoOptions.tieBreak
+      });
+      if (hit) {
+        closePosition(tick, hit, px, hit === "TP" ? "limit" : "stop");
+      }
+    }
+    if (!open && pending && index > pending.createdAtIndex) {
+      if (pending.orderType === "market") {
+        const rawSize = pending.fixedQty ?? calculatePositionSize({
+          equity: currentEquity,
+          entry: tick.close,
+          stop: pending.stop,
+          riskFraction: pending.riskFrac,
+          qtyStep,
+          minQty,
+          maxLeverage
+        });
+        const size = roundStep2(rawSize, qtyStep);
+        if (size >= minQty) {
+          const { price, feeTotal } = applyFill(tick.close, pending.side, {
+            slippageBps,
+            feeBps,
+            kind: "market",
+            qty: size,
+            costs
+          });
+          open = {
+            symbol,
+            id: ++tradeIdCounter,
+            side: pending.side,
+            entry: tick.close,
+            stop: pending.stop,
+            takeProfit: pending.takeProfit,
+            size,
+            openTime: tick.time,
+            entryFill: price,
+            entryFeeTotal: feeTotal,
+            _initRisk: Math.abs(tick.close - pending.stop)
+          };
+          dayTrades += 1;
+          if (collectReplay) {
+            replayEvents.push({
+              t: new Date(tick.time).toISOString(),
+              price,
+              type: "entry",
+              side: open.side,
+              size,
+              tradeId: open.id
+            });
+          }
+        }
+        pending = null;
+      } else {
+        const touched = pending.side === "long" ? tick.low <= pending.entry : tick.high >= pending.entry;
+        if (touched && deterministicFill(queueFillProbability, [
+          seed,
+          symbol,
+          tick.time,
+          pending.entry,
+          pending.stop,
+          pending.side
+        ])) {
+          const rawSize = pending.fixedQty ?? calculatePositionSize({
+            equity: currentEquity,
+            entry: pending.entry,
+            stop: pending.stop,
+            riskFraction: pending.riskFrac,
+            qtyStep,
+            minQty,
+            maxLeverage
+          });
+          const size = roundStep2(rawSize, qtyStep);
+          if (size >= minQty) {
+            const { price, feeTotal } = applyFill(pending.entry, pending.side, {
+              slippageBps,
+              feeBps,
+              kind: "limit",
+              qty: size,
+              costs
+            });
+            open = {
+              symbol,
+              id: ++tradeIdCounter,
+              side: pending.side,
+              entry: pending.entry,
+              stop: pending.stop,
+              takeProfit: pending.takeProfit,
+              size,
+              openTime: tick.time,
+              entryFill: price,
+              entryFeeTotal: feeTotal,
+              _initRisk: Math.abs(pending.entry - pending.stop)
+            };
+            dayTrades += 1;
+            if (collectReplay) {
+              replayEvents.push({
+                t: new Date(tick.time).toISOString(),
+                price,
+                type: "entry",
+                side: open.side,
+                size,
+                tradeId: open.id
+              });
+            }
+          }
+          pending = null;
+        }
+      }
+    }
+    const maxLossDollars = Math.abs(maxDailyLossPct) / 100 * dayStartEquity;
+    const dailyLossHit = maxDailyLossPct > 0 && dayPnl <= -maxLossDollars;
+    const dailyTradeCapHit = dailyMaxTrades > 0 && dayTrades >= dailyMaxTrades;
+    if (!open && !pending && !dailyLossHit && !dailyTradeCapHit) {
+      const nextSignal = normalizeSignal3(
+        callSignalWithContext3({
+          signal,
+          context: {
+            candles: history,
+            index,
+            bar: tick,
+            equity: markedEquity(tick),
+            openPosition: open,
+            pendingOrder: pending
+          },
+          index,
+          bar: tick,
+          symbol
+        }),
+        tick,
+        finalTP_R
+      );
+      if (nextSignal) {
+        pending = {
+          side: nextSignal.side,
+          entry: nextSignal.entry,
+          stop: nextSignal.stop,
+          takeProfit: nextSignal.takeProfit,
+          fixedQty: nextSignal.qty,
+          riskFrac: Number.isFinite(nextSignal.riskFraction) ? nextSignal.riskFraction : Number.isFinite(nextSignal.riskPct) ? nextSignal.riskPct / 100 : riskPct / 100,
+          orderType: nextSignal.orderType,
+          createdAtIndex: index
+        };
+      }
+    }
+    recordFrame(tick);
+  }
+  if (open) {
+    const lastTick = normalizedTicks[normalizedTicks.length - 1];
+    closePosition(lastTick, "EOT", lastTick.close, "market");
+    recordFrame(lastTick);
+  }
+  const positions = trades;
+  const metrics = buildMetrics({
+    closed: trades,
+    equityStart: equity,
+    equityFinal: currentEquity,
+    candles: normalizedTicks,
+    estBarMs: normalizedTicks.length > 1 ? Math.max(1, normalizedTicks[1].time - normalizedTicks[0].time) : 1,
+    eqSeries,
+    interval
+  });
+  return {
+    symbol,
+    interval,
+    range,
+    trades,
+    positions,
+    openPositions: [],
+    metrics,
+    eqSeries,
+    replay: {
+      frames: replayFrames,
+      events: replayEvents
+    }
+  };
 }
 
 // src/engine/portfolio.js
@@ -3210,6 +3294,74 @@ function backtestPortfolio({
     systems: systemResults
   };
 }
+
+// src/engine/llmSignal.js
+function isArrayIndexKey3(property) {
+  if (typeof property !== "string") return false;
+  const n = Number(property);
+  return Number.isInteger(n) && n >= 0;
+}
+function noLookaheadView(candles, index) {
+  return new Proxy(candles, {
+    get(target, property, receiver) {
+      if (isArrayIndexKey3(property) && Number(property) > index) {
+        throw new Error(
+          `LlmSignal: lookahead access to candles[${String(property)}] (current index ${index})`
+        );
+      }
+      return Reflect.get(target, property, receiver);
+    }
+  });
+}
+var LlmSignal = class {
+  constructor({ resolve, budgetMs = 0, onError = "skip" } = {}) {
+    if (typeof resolve !== "function") {
+      throw new Error("LlmSignal requires a resolve(context) function");
+    }
+    this.resolve = resolve;
+    this.budgetMs = budgetMs;
+    this.onError = onError;
+    this.log = [];
+    this._cache = /* @__PURE__ */ new Map();
+    this.signal = this.signal.bind(this);
+  }
+  async signal(context) {
+    const key = context.bar?.time ?? context.index;
+    if (this._cache.has(key)) return this._cache.get(key);
+    const safeContext = {
+      ...context,
+      candles: noLookaheadView(context.candles, context.index)
+    };
+    const startedAt = Date.now();
+    try {
+      const result = await withBudget(
+        Promise.resolve().then(() => this.resolve(safeContext)),
+        this.budgetMs
+      );
+      this._cache.set(key, result ?? null);
+      this.log.push({
+        index: context.index,
+        time: context.bar?.time,
+        close: context.bar?.close,
+        latencyMs: Date.now() - startedAt,
+        result: result ?? null
+      });
+      return result ?? null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.log.push({
+        index: context.index,
+        time: context.bar?.time,
+        close: context.bar?.close,
+        latencyMs: Date.now() - startedAt,
+        error: message
+      });
+      this._cache.set(key, null);
+      if (this.onError === "throw") throw error;
+      return null;
+    }
+  }
+};
 
 // src/engine/walkForward.js
 function scoreOf(metrics, scoreBy) {
@@ -4124,8 +4276,10 @@ function exportBacktestArtifacts({
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   BIG_NUMBER,
+  LlmSignal,
   atr,
   backtest,
+  backtestAsync,
   backtestHistorical,
   backtestPortfolio,
   backtestTicks,

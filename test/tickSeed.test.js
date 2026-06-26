@@ -12,9 +12,7 @@ function buildTicks(n = 200) {
 }
 
 const signal = ({ index, bar }) =>
-  index % 20 === 0
-    ? { side: "long", entry: bar.close - 0.05, stop: bar.close - 0.2, rr: 2 }
-    : null;
+  index % 20 === 0 ? { side: "long", entry: bar.close - 0.05, stop: bar.close - 0.2, rr: 2 } : null;
 
 test("same seed + queueFillProbability < 1 is reproducible", () => {
   const ticks = buildTicks();
