@@ -29,6 +29,7 @@ npm install tradelab
 - [Quick start](#quick-start)
 - [Loading historical data](#loading-historical-data)
 - [Core concepts](#core-concepts)
+- [AI agents / MCP](#ai-agents--mcp)
 - [Portfolio mode](#portfolio-mode)
 - [Walk-forward optimization](#walk-forward-optimization)
 - [Tick backtests](#tick-backtests)
@@ -96,6 +97,14 @@ exportBacktestArtifacts({ result, outDir: "./output" });
 ```
 
 After the run, check `result.metrics` for the headline numbers and `result.positions` for the trade log.
+
+---
+
+## AI agents / MCP
+
+`tradelab-mcp` lets MCP-capable agents run the research loop through tools: list strategies, fetch candles, run backtests, and walk-forward validate parameter grids.
+
+See [docs/mcp.md](docs/mcp.md) for setup and the Claude Desktop config.
 
 ---
 
@@ -458,6 +467,7 @@ const { rsi, macd, bollinger, vwap, supertrend } = require("tradelab/ta");
 | [Backtest engine](docs/backtest-engine.md)             | Signal contract, all options, result shape, portfolio mode, walk-forward       |
 | [Data, reporting, and CLI](docs/data-reporting-cli.md) | Data loading, cache behavior, exports, CLI reference                           |
 | [Live trading](docs/live-trading.md)                   | Live engine, broker adapters, paper mode, orchestration, and state persistence |
+| [MCP server](docs/mcp.md)                              | Run the research loop from any MCP-capable agent                               |
 | [Strategy examples](docs/examples.md)                  | Mean reversion, breakout, sentiment, LLM, and portfolio strategy patterns      |
 | [API reference](docs/api-reference.md)                 | Compact index of every public export                                           |
 

@@ -566,6 +566,25 @@ export interface LlmDecisionLogEntry {
   error?: string;
 }
 
+export interface StrategyParamSpec {
+  type: string;
+  default?: unknown;
+  description?: string;
+  [key: string]: unknown;
+}
+
+export interface StrategyDefinition {
+  description: string;
+  params: Record<string, StrategyParamSpec>;
+  factory: (params?: Record<string, unknown>) => SignalFunction;
+}
+
+export interface StrategySummary {
+  name: string;
+  description: string;
+  params: Record<string, StrategyParamSpec>;
+}
+
 /**
  * Run a candle-based backtest.
  *
@@ -614,6 +633,10 @@ export class LlmSignal {
   log: LlmDecisionLogEntry[];
   signal(context: SignalContext): Promise<SignalResult | null>;
 }
+
+export function registerStrategy(name: string, def: StrategyDefinition): void;
+export function listStrategies(): StrategySummary[];
+export function getStrategy(name: string): StrategyDefinition["factory"];
 
 export function getHistoricalCandles(options?: HistoricalDataOptions): Promise<Candle[]>;
 export function backtestHistorical(options: BacktestHistoricalOptions): Promise<BacktestResult>;
