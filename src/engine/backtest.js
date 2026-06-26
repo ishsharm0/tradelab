@@ -12,6 +12,7 @@ import {
   estimateBarMs,
   dayKeyUTC,
   dayKeyET,
+  financingCost,
 } from "./execution.js";
 
 function asNumber(value) {
@@ -306,7 +307,14 @@ export function backtest(rawOptions) {
     const entryFill = openPos.entryFill;
     const grossPnl = (exitPx - entryFill) * direction * qty;
     const entryFeePortion = (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
-    const pnl = grossPnl - entryFeePortion - exitFeeTotal;
+    const financing = financingCost({
+      side: openPos.side,
+      notional: entryFill * qty,
+      fromMs: openPos.openTime,
+      toMs: time,
+      costs,
+    });
+    const pnl = grossPnl - entryFeePortion - exitFeeTotal - financing;
 
     currentEquity += pnl;
     dayPnl += pnl;
@@ -350,6 +358,7 @@ export function backtest(rawOptions) {
         time,
         reason,
         pnl,
+        financing,
         exitATR: openPos._lastATR ?? undefined,
       },
       mfeR: openPos._mfeR ?? 0,
