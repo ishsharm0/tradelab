@@ -4,6 +4,9 @@ export { backtestPortfolio } from "./engine/portfolio.js";
 export { walkForwardOptimize } from "./engine/walkForward.js";
 
 export { buildMetrics } from "./metrics/buildMetrics.js";
+export { benchmarkStats } from "./metrics/benchmark.js";
+export { clampFinite, BIG_NUMBER } from "./metrics/finite.js";
+export { periodsPerYear } from "./metrics/annualize.js";
 export {
   backtestHistorical,
   cachedCandlesPath,

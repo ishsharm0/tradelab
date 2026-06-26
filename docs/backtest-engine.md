@@ -248,6 +248,18 @@ Useful first checks after any run:
 - `metrics.maxDrawdown`: whether the path is survivable
 - `metrics.sideBreakdown`: whether one side carries the result
 
+### Risk-adjusted metrics
+
+- `sharpe` / `sortino` are per-period (daily-bucketed).
+- `sharpeAnnualized` / `sortinoAnnualized` scale by `sqrt(annualizationPeriods)`,
+  where `annualizationPeriods` is derived from `interval` (falling back to the
+  median bar spacing). Use these to compare strategies across timeframes.
+- `profitFactor`, `calmar`, and the Sharpe/Sortino family are clamped to a finite
+  `BIG_NUMBER` (1e9) so `metrics` JSON never contains `Infinity` or `NaN`.
+- `benchmark` (`{ alpha, beta, correlation, informationRatio, trackingError }`)
+  is populated when you pass `benchmarkReturns` (per-day return array aligned to
+  the strategy's daily equity buckets) to `backtest()`.
+
 ### `eqSeries`
 
 Realized equity points:

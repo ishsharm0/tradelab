@@ -154,6 +154,7 @@ function mergeOptions(options) {
     maxSlipROnFill: options.maxSlipROnFill ?? 0.4,
     collectEqSeries: options.collectEqSeries ?? true,
     collectReplay: options.collectReplay ?? true,
+    benchmarkReturns: Array.isArray(options.benchmarkReturns) ? options.benchmarkReturns : null,
     strict: options.strict ?? false,
   };
 }
@@ -873,6 +874,7 @@ export function backtest(rawOptions) {
     estBarMs: estimatedBarMs,
     eqSeries,
     interval: options.interval,
+    benchmarkReturns: options.benchmarkReturns,
   });
   const positions = closed.filter((trade) => trade.exit.reason !== "SCALE");
   const lastPrice = asNumber(candles[candles.length - 1]?.close);

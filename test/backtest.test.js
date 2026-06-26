@@ -588,3 +588,31 @@ test("backtest result metrics expose sharpeAnnualized", () => {
   assert.equal("sharpeAnnualized" in result.metrics, true);
   assert.equal(result.metrics.annualizationPeriods, 252 * 6.5 * 12); // 5m
 });
+
+test("backtest forwards benchmarkReturns into metrics.benchmark", () => {
+  // Build candles spanning multiple days so dailyReturnsSeries is non-trivial.
+  // 20 bars at 1d intervals => up to ~20 daily buckets; benchmark must match.
+  const dayMs = 24 * 60 * 60 * 1000;
+  const start = Date.UTC(2025, 0, 2, 14, 30, 0);
+  const dailyCandles = Array.from({ length: 20 }, (_, index) => ({
+    time: start + index * dayMs,
+    open: 100 + index,
+    high: 101 + index,
+    low: 99 + index,
+    close: 100.5 + index,
+    volume: 1000 + index,
+  }));
+  const result = backtest({
+    candles: dailyCandles,
+    interval: "1d",
+    warmupBars: 1,
+    flattenAtClose: false,
+    benchmarkReturns: Array.from({ length: 20 }, () => 0.001),
+    signal({ index, bar }) {
+      if (index !== 1) return null;
+      return { side: "buy", stop: bar.close - 1, rr: 2 };
+    },
+  });
+  assert.equal(typeof result.metrics.benchmark, "object");
+  assert.equal(result.metrics.benchmark.beta !== null, true);
+});
