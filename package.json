@@ -38,6 +38,11 @@
       "import": "./src/live/index.js",
       "require": "./dist/cjs/live.cjs"
     },
+    "./ta": {
+      "types": "./types/ta.d.ts",
+      "import": "./src/ta/index.js",
+      "require": "./dist/cjs/ta.cjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
