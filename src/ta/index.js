@@ -12,3 +12,5 @@ export {
 export { rsi, macd, stochastic } from "./oscillators.js";
 
 export { bollinger, donchian, keltner } from "./channels.js";
+
+export { supertrend, vwap } from "./trend.js";
