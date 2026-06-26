@@ -555,8 +555,8 @@ export class BarSystemRunner {
     };
   }
 
-  step({ signalEquity, canTrade = true, resolveEntrySize } = {}) {
-    if (!this.hasNext()) return null;
+  _preSignal({ signalEquity, canTrade = true, resolveEntrySize } = {}) {
+    if (!this.hasNext()) return { handled: true, bar: null };
 
     const bar = this.candles[this.index];
     this.history.push(bar);
@@ -940,52 +940,58 @@ export class BarSystemRunner {
       if (this.cooldown > 0) this.cooldown -= 1;
       this.recordFrame(bar);
       this.index += 1;
-      return bar;
+      return { handled: true, bar };
     }
 
     if (!canTrade || dailyLossHit || dailyTradeCapHit) {
       this.pending = null;
       this.recordFrame(bar);
       this.index += 1;
-      return bar;
+      return { handled: true, bar };
     }
 
-    if (!this.pending) {
-      const rawSignal = callSignalWithContext({
-        signal: this.options.signal,
-        context: this.buildSignalContext(this.index, bar, signalEquity),
-        index: this.index,
-        bar,
-        symbol: this.symbol,
-      });
-      const nextSignal = normalizeSignal(rawSignal, bar, this.options.finalTP_R);
+    if (this.pending) {
+      this.recordFrame(bar);
+      this.index += 1;
+      return { handled: true, bar };
+    }
 
-      if (nextSignal) {
-        const signalRiskFraction = Number.isFinite(nextSignal.riskFraction)
-          ? nextSignal.riskFraction
-          : Number.isFinite(nextSignal.riskPct)
-            ? nextSignal.riskPct / 100
-            : this.options.riskPct / 100;
-        const expiryBars = nextSignal._entryExpiryBars ?? 5;
-        this.pending = {
-          side: nextSignal.side,
-          entry: nextSignal.entry,
-          stop: nextSignal.stop,
-          tp: nextSignal.takeProfit,
-          riskFrac: signalRiskFraction,
-          fixedQty: nextSignal.qty,
-          expiresAt: this.index + Math.max(1, expiryBars),
-          startedAtIndex: this.index,
-          meta: nextSignal,
-          plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop),
-        };
+    return {
+      handled: false,
+      bar,
+      trigger,
+      signalEquity,
+      resolveEntrySize,
+    };
+  }
 
-        if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
-          if (
-            !this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)
-          ) {
-            this.pending = null;
-          }
+  _applyRawSignal(rawSignal, pre) {
+    const { bar, trigger, signalEquity, resolveEntrySize } = pre;
+    const nextSignal = normalizeSignal(rawSignal, bar, this.options.finalTP_R);
+
+    if (nextSignal) {
+      const signalRiskFraction = Number.isFinite(nextSignal.riskFraction)
+        ? nextSignal.riskFraction
+        : Number.isFinite(nextSignal.riskPct)
+          ? nextSignal.riskPct / 100
+          : this.options.riskPct / 100;
+      const expiryBars = nextSignal._entryExpiryBars ?? 5;
+      this.pending = {
+        side: nextSignal.side,
+        entry: nextSignal.entry,
+        stop: nextSignal.stop,
+        tp: nextSignal.takeProfit,
+        riskFrac: signalRiskFraction,
+        fixedQty: nextSignal.qty,
+        expiresAt: this.index + Math.max(1, expiryBars),
+        startedAtIndex: this.index,
+        meta: nextSignal,
+        plannedRiskAbs: Math.abs(nextSignal._initRisk ?? nextSignal.entry - nextSignal.stop),
+      };
+
+      if (touchedLimit(this.pending.side, this.pending.entry, bar, trigger)) {
+        if (!this.openFromPending(bar, signalEquity, this.pending.entry, "limit", resolveEntrySize)) {
+          this.pending = null;
         }
       }
     }
@@ -993,6 +999,32 @@ export class BarSystemRunner {
     this.recordFrame(bar);
     this.index += 1;
     return bar;
+  }
+
+  step(options = {}) {
+    const pre = this._preSignal(options);
+    if (pre.handled) return pre.bar;
+    const rawSignal = callSignalWithContext({
+      signal: this.options.signal,
+      context: this.buildSignalContext(this.index, pre.bar, pre.signalEquity),
+      index: this.index,
+      bar: pre.bar,
+      symbol: this.symbol,
+    });
+    return this._applyRawSignal(rawSignal, pre);
+  }
+
+  async stepAsync(options = {}) {
+    const pre = this._preSignal(options);
+    if (pre.handled) return pre.bar;
+    const rawSignal = await callSignalWithContextAsync({
+      signal: this.options.signal,
+      context: this.buildSignalContext(this.index, pre.bar, pre.signalEquity),
+      index: this.index,
+      bar: pre.bar,
+      symbol: this.symbol,
+    });
+    return this._applyRawSignal(rawSignal, pre);
   }
 
   buildResult() {
