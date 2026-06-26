@@ -1726,6 +1726,7 @@ function dayKeyET(timeMs) {
   const pseudoEtTime = anchor.getTime() + hoursET * 60 * 60 * 1e3 + minutesETDay * 60 * 1e3;
   return dayKeyUTC(pseudoEtTime);
 }
+var MS_PER_YEAR = 365 * 24 * 60 * 60 * 1e3;
 
 // src/live/engine/candleAggregator.js
 function intervalToMs(interval) {

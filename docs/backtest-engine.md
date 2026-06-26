@@ -203,6 +203,15 @@ For more control, use `costs`:
     commissionPerUnit: 0,
     commissionPerOrder: 1,
     minCommission: 1,
+    carry: {
+      longAnnualBps: 500,
+      shortAnnualBps: 800,
+    },
+    funding: {
+      rateBps: 10,
+      intervalMs: 8 * 60 * 60 * 1000,
+      anchorMs: 0,
+    },
   },
 }
 ```
@@ -213,8 +222,12 @@ For more control, use `costs`:
 - spread is modeled as half-spread paid on entry and exit
 - commission can be percentage-based, per-unit, per-order, or mixed
 - `minCommission` floors the fee for that fill
+- `carry.longAnnualBps` and `carry.shortAnnualBps` are annualized financing or borrow rates deducted when each leg closes
+- `funding.rateBps` applies once per funding boundary in `(openTime, closeTime]`; positive rates charge longs and credit shorts
 
 This is still a bar-based simulation. It does not model queue position, exchange microstructure, or realistic intrabar order priority.
+
+Closed trades expose the time-based charge as `trade.exit.financing`. It is already included in `trade.exit.pnl` and aggregate metrics, so use it only when you need attribution.
 
 ### Advanced trade management
 

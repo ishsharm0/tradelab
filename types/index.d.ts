@@ -82,6 +82,7 @@ export interface TradeExit {
   time: number;
   reason: string;
   pnl: number;
+  financing?: number;
   exitATR?: number;
 }
 
@@ -271,6 +272,15 @@ export interface ExecutionCostOptions {
   commissionPerUnit?: number;
   commissionPerOrder?: number;
   minCommission?: number;
+  carry?: {
+    longAnnualBps?: number;
+    shortAnnualBps?: number;
+  };
+  funding?: {
+    rateBps?: number;
+    intervalMs?: number;
+    anchorMs?: number;
+  };
 }
 
 export interface MfeTrailOptions {

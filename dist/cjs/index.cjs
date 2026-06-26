@@ -1039,6 +1039,30 @@ function dayKeyET(timeMs) {
   const pseudoEtTime = anchor.getTime() + hoursET * 60 * 60 * 1e3 + minutesETDay * 60 * 1e3;
   return dayKeyUTC2(pseudoEtTime);
 }
+var MS_PER_YEAR2 = 365 * 24 * 60 * 60 * 1e3;
+function fundingEvents(fromMs, toMs, intervalMs, anchorMs = 0) {
+  if (!(intervalMs > 0) || toMs <= fromMs) return 0;
+  const firstK = Math.floor((fromMs - anchorMs) / intervalMs) + 1;
+  const lastK = Math.floor((toMs - anchorMs) / intervalMs);
+  return Math.max(0, lastK - firstK + 1);
+}
+function financingCost({ side, notional, fromMs, toMs, costs }) {
+  const model = costs || {};
+  const absNotional = Math.abs(notional);
+  let cost = 0;
+  if (model.carry) {
+    const annualBps = side === "long" ? model.carry.longAnnualBps ?? 0 : model.carry.shortAnnualBps ?? 0;
+    const years = Math.max(0, toMs - fromMs) / MS_PER_YEAR2;
+    cost += absNotional * (annualBps / 1e4) * years;
+  }
+  const funding = model.funding;
+  if (funding && funding.intervalMs > 0 && Number.isFinite(funding.rateBps)) {
+    const count = fundingEvents(fromMs, toMs, funding.intervalMs, funding.anchorMs ?? 0);
+    const perEvent = absNotional * (funding.rateBps / 1e4);
+    cost += (side === "long" ? 1 : -1) * perEvent * count;
+  }
+  return cost;
+}
 
 // src/engine/backtest.js
 function asNumber(value) {
@@ -1293,7 +1317,14 @@ function backtest(rawOptions) {
     const entryFill = openPos.entryFill;
     const grossPnl = (exitPx - entryFill) * direction * qty;
     const entryFeePortion = (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
-    const pnl = grossPnl - entryFeePortion - exitFeeTotal;
+    const financing = financingCost({
+      side: openPos.side,
+      notional: entryFill * qty,
+      fromMs: openPos.openTime,
+      toMs: time,
+      costs
+    });
+    const pnl = grossPnl - entryFeePortion - exitFeeTotal - financing;
     currentEquity += pnl;
     dayPnl += pnl;
     if (wantEqSeries) {
@@ -1321,6 +1352,7 @@ function backtest(rawOptions) {
         time,
         reason,
         pnl,
+        financing,
         exitATR: openPos._lastATR ?? void 0
       },
       mfeR: openPos._mfeR ?? 0,
@@ -2014,7 +2046,14 @@ var BarSystemRunner = class {
     const entryFill = openPos.entryFill;
     const grossPnl = (exitPx - entryFill) * direction * qty;
     const entryFeePortion = (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
-    const pnl = grossPnl - entryFeePortion - exitFeeTotal;
+    const financing = financingCost({
+      side: openPos.side,
+      notional: entryFill * qty,
+      fromMs: openPos.openTime,
+      toMs: time,
+      costs: this.options.costs
+    });
+    const pnl = grossPnl - entryFeePortion - exitFeeTotal - financing;
     this.currentEquity += pnl;
     this.dayPnl += pnl;
     if (this.wantEqSeries) {
@@ -2043,6 +2082,7 @@ var BarSystemRunner = class {
         time,
         reason,
         pnl,
+        financing,
         exitATR: openPos._lastATR ?? void 0
       },
       mfeR: openPos._mfeR ?? 0,
@@ -2808,7 +2848,14 @@ function backtestTicks({
     });
     const direction = open.side === "long" ? 1 : -1;
     const grossPnl = (price - open.entryFill) * direction * open.size;
-    const pnl = grossPnl - (open.entryFeeTotal || 0) - feeTotal;
+    const financing = financingCost({
+      side: open.side,
+      notional: open.entryFill * open.size,
+      fromMs: open.openTime,
+      toMs: tick.time,
+      costs
+    });
+    const pnl = grossPnl - (open.entryFeeTotal || 0) - feeTotal - financing;
     currentEquity += pnl;
     dayPnl += pnl;
     const trade = {
@@ -2817,7 +2864,8 @@ function backtestTicks({
         price,
         time: tick.time,
         reason,
-        pnl
+        pnl,
+        financing
       }
     };
     trades.push(trade);

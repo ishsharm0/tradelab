@@ -347,6 +347,15 @@ const result = backtest({
     commissionPerUnit: 0,
     commissionPerOrder: 1,
     minCommission: 1,
+    carry: {
+      longAnnualBps: 500,
+      shortAnnualBps: 800,
+    },
+    funding: {
+      rateBps: 10,
+      intervalMs: 8 * 60 * 60 * 1000,
+      anchorMs: 0,
+    },
   },
 });
 ```
@@ -355,6 +364,9 @@ const result = backtest({
 - Spread is modeled as half-spread paid on entry and exit
 - Commission can be percentage-based, per-unit, per-order, or mixed
 - `minCommission` floors the fee per fill
+- `carry` models annualized overnight financing or borrow costs
+- `funding` models per-interval perpetual futures funding; positive rates charge longs and credit shorts
+- Closed trades include `exit.financing`, already deducted from `exit.pnl`
 
 > Leaving costs at zero is the most common cause of inflated backtests. Set them from the start.
 
