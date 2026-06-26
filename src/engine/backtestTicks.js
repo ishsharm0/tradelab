@@ -163,6 +163,7 @@ export function backtestTicks({
   collectEqSeries = true,
   collectReplay = true,
   queueFillProbability = 1,
+  seed = "tradelab-ticks",
   oco = {},
 } = {}) {
   if (!Array.isArray(ticks) || ticks.length === 0) {
@@ -343,6 +344,7 @@ export function backtestTicks({
         if (
           touched &&
           deterministicFill(queueFillProbability, [
+            seed,
             symbol,
             tick.time,
             pending.entry,
