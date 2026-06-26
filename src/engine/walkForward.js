@@ -225,6 +225,7 @@ export function walkForwardOptimize({
     candles,
     estBarMs: estimateBarMs(candles),
     eqSeries,
+    interval: backtestOptions.interval,
   });
   const bestParamsSummary = summarizeBestParams(windows);
 

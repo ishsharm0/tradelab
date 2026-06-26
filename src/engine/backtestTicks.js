@@ -462,6 +462,7 @@ export function backtestTicks({
         ? Math.max(1, normalizedTicks[1].time - normalizedTicks[0].time)
         : 1,
     eqSeries,
+    interval,
   });
 
   return {

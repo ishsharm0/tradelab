@@ -992,6 +992,7 @@ export class BarSystemRunner {
       candles: this.candles,
       estBarMs: this.estimatedBarMs,
       eqSeries: this.eqSeries,
+      interval: this.options.interval,
     });
     const positions = this.closed.filter((trade) => trade.exit.reason !== "SCALE");
     const lastPrice = asNumber(this.candles[this.candles.length - 1]?.close);

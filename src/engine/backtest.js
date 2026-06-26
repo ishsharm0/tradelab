@@ -872,6 +872,7 @@ export function backtest(rawOptions) {
     candles,
     estBarMs: estimatedBarMs,
     eqSeries,
+    interval: options.interval,
   });
   const positions = closed.filter((trade) => trade.exit.reason !== "SCALE");
   const lastPrice = asNumber(candles[candles.length - 1]?.close);

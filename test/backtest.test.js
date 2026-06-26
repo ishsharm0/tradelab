@@ -572,3 +572,19 @@ test("calculatePositionSize returns zero for non-positive equity", () => {
     console.warn = originalWarn;
   }
 });
+
+test("backtest result metrics expose sharpeAnnualized", () => {
+  const candles = buildCandles();
+  const result = backtest({
+    candles,
+    interval: "5m",
+    warmupBars: 1,
+    flattenAtClose: false,
+    signal({ index, bar }) {
+      if (index !== 1) return null;
+      return { side: "buy", stop: bar.close - 1, rr: 2 };
+    },
+  });
+  assert.equal("sharpeAnnualized" in result.metrics, true);
+  assert.equal(result.metrics.annualizationPeriods, 252 * 6.5 * 12); // 5m
+});
