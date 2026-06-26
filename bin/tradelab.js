@@ -116,6 +116,22 @@ function createBrokerAdapter(args, overrides = {}) {
   throw new Error(`Unsupported broker "${brokerName}"`);
 }
 
+async function maybeStartDashboard(args, source) {
+  if (!toBoolean(args.dashboard, false)) return null;
+  const { createDashboardServer } = await import("../src/live/dashboard/server.js");
+  const dashboard = createDashboardServer({
+    source,
+    port: toNumber(args.dashboardPort, 4317),
+  });
+  const url = await dashboard.start();
+  console.log(`dashboard: ${url}`);
+  return dashboard;
+}
+
+async function closeDashboard(dashboard) {
+  if (dashboard) await dashboard.close();
+}
+
 function brokerConfigFromArgs(args, overrides = {}) {
   return {
     apiKey: overrides.apiKey ?? args.apiKey,
@@ -514,6 +530,7 @@ async function commandLive(args, overrides = {}) {
       maxDailyLossPct: toNumber(fileConfig.maxDailyLossPct ?? args.maxDailyLossPct, 0),
       equity: toNumber(fileConfig.equity ?? args.equity, 10_000),
     });
+    const dashboard = await maybeStartDashboard(args, orchestrator);
     await broker.connect(brokerConfig);
     await orchestrator.start();
 
@@ -526,6 +543,15 @@ async function commandLive(args, overrides = {}) {
 
     if (!watch) {
       await orchestrator.stop();
+      await closeDashboard(dashboard);
+    } else if (dashboard) {
+      const shutdown = async () => {
+        await orchestrator.stop();
+        await closeDashboard(dashboard);
+        process.exit(0);
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
     }
     return;
   }
@@ -551,6 +577,7 @@ async function commandLive(args, overrides = {}) {
     storage,
     brokerConfig,
   });
+  const dashboard = await maybeStartDashboard(args, engine);
 
   await engine.start();
 
@@ -563,11 +590,13 @@ async function commandLive(args, overrides = {}) {
 
   if (!watch) {
     await engine.stop();
+    await closeDashboard(dashboard);
     return;
   }
 
   const shutdown = async () => {
     await engine.stop();
+    await closeDashboard(dashboard);
     process.exit(0);
   };
   process.once("SIGINT", shutdown);

@@ -122,6 +122,32 @@ Use orchestrator when multiple systems should share one broker/account context.
 | `tradelab paper`  | Shortcut for `live` with paper broker mode   |
 | `tradelab status` | Inspect persisted live state                 |
 
+## Live dashboard
+
+Use `createDashboardServer()` to watch a running `LiveEngine` or `LiveOrchestrator` locally. The dashboard serves a static page over `node:http`, streams live events with Server-Sent Events at `/events`, and reads current state from `/state`.
+
+```js
+import { createDashboardServer } from "tradelab/live";
+
+const dashboard = createDashboardServer({ source: engine, port: 4317 });
+const url = await dashboard.start();
+console.log(`dashboard: ${url}`);
+
+// Later, during shutdown:
+await dashboard.close();
+```
+
+The page shows equity, day PnL, open position, risk state, and a recent event tail for signals, fills, position changes, equity updates, and risk halts. New browser clients receive a bounded replay of recent events so the page is useful immediately after opening.
+
+The CLI can start the same dashboard for both single-engine and config/orchestrator runs:
+
+```bash
+tradelab paper --symbol AAPL --interval 1m --mode polling --dashboard --dashboardPort 4317
+tradelab live --config ./live-portfolio.json --paper --dashboard --dashboardPort 4317
+```
+
+The dashboard implementation is ESM-first. The CommonJS live bundle can be imported, but packaged dashboard usage should prefer `import { createDashboardServer } from "tradelab/live"`.
+
 ### Single-system paper run
 
 ```bash

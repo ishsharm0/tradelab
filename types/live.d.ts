@@ -330,6 +330,21 @@ export class LiveOrchestrator {
   getStatus(): Record<string, unknown>;
 }
 
+export interface DashboardServer {
+  start(): Promise<string>;
+  close(): Promise<void>;
+  server: import("node:http").Server;
+}
+
+export function createDashboardServer(options: {
+  source: {
+    eventBus: EventBus;
+    getStatus?: () => Record<string, unknown>;
+  };
+  port?: number;
+  maxBuffer?: number;
+}): DashboardServer;
+
 export function createEventBus(): EventBus;
 export function createLogger(options?: {
   level?: "debug" | "info" | "warn" | "error" | "silent";
