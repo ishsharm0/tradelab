@@ -9,6 +9,7 @@ import {
   calculatePositionSize,
   walkForwardOptimize,
 } from "../src/index.js";
+import { BIG_NUMBER } from "../src/metrics/finite.js";
 
 function buildCandles(count = 20) {
   const start = Date.UTC(2025, 0, 2, 14, 30, 0);
@@ -543,7 +544,7 @@ test("buildMetrics caps profitFactor when there are no losing trades", () => {
   });
 
   assert.equal(Number.isFinite(metrics.profitFactor), true);
-  assert.equal(metrics.profitFactor, 1_000_000);
+  assert.equal(metrics.profitFactor, BIG_NUMBER);
 });
 
 test("calculatePositionSize returns zero for non-positive equity", () => {

@@ -1,3 +1,7 @@
+import { clampFinite, BIG_NUMBER } from "./finite.js";
+import { periodsPerYear } from "./annualize.js";
+import { benchmarkStats } from "./benchmark.js";
+
 function sum(values) {
   return values.reduce((total, value) => total + value, 0);
 }
@@ -120,11 +124,9 @@ function percentile(values, percentileRank) {
   return sorted[index];
 }
 
-const PROFIT_FACTOR_CAP = 1_000_000;
-
 function finiteProfitFactor(grossProfit, grossLoss) {
   if (grossLoss === 0) {
-    return grossProfit > 0 ? PROFIT_FACTOR_CAP : 0;
+    return grossProfit > 0 ? BIG_NUMBER : 0;
   }
   return grossProfit / grossLoss;
 }
@@ -136,7 +138,16 @@ function finiteProfitFactor(grossProfit, grossLoss) {
  * `profitFactor`, `winRate`, `expectancy`, `maxDrawdown`, `sharpe`, `avgHold`,
  * and `sideBreakdown`, while preserving the more specific legacy fields.
  */
-export function buildMetrics({ closed, equityStart, equityFinal, candles, estBarMs, eqSeries }) {
+export function buildMetrics({
+  closed,
+  equityStart,
+  equityFinal,
+  candles,
+  estBarMs,
+  eqSeries,
+  interval,
+  benchmarkReturns,
+}) {
   const legs = [...closed].sort((left, right) => left.exit.time - right.exit.time);
   const completedTrades = [];
   const tradeRs = [];
@@ -283,19 +294,28 @@ export function buildMetrics({ closed, equityStart, equityFinal, candles, estBar
     },
   };
 
+  const periods = periodsPerYear(interval, estBarMs);
+  const sqrtPeriods = Math.sqrt(periods);
+  const sharpeAnnualized = clampFinite(sharpeDaily) * sqrtPeriods;
+  const sortinoAnnualized = clampFinite(sortinoDaily) * sqrtPeriods;
+  const benchmark = benchmarkStats(dailyReturnsSeries, benchmarkReturns ?? []);
+
   return {
     trades: completedTrades.length,
     winRate: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
-    profitFactor: profitFactorPositions,
+    profitFactor: clampFinite(profitFactorPositions),
     expectancy,
     totalR,
     avgR,
-    sharpe: sharpeDaily,
-    sharpePerTrade,
-    sortinoPerTrade,
+    sharpe: clampFinite(sharpeDaily),
+    sharpeAnnualized,
+    sortinoAnnualized,
+    sharpePerTrade: clampFinite(sharpePerTrade),
+    sortinoPerTrade: clampFinite(sortinoPerTrade),
+    annualizationPeriods: periods,
     maxDrawdown: maxDrawdown,
     maxDrawdownPct: maxDrawdown,
-    calmar,
+    calmar: clampFinite(calmar),
     maxConsecWins: maxWin,
     maxConsecLosses: maxLoss,
     avgHold: avgHoldMin,
@@ -309,8 +329,9 @@ export function buildMetrics({ closed, equityStart, equityFinal, candles, estBar
     profitFactor_leg: profitFactorLegs,
     winRate_pos: completedTrades.length ? winningTradeCount / completedTrades.length : 0,
     winRate_leg: legs.length ? winningLegCount / legs.length : 0,
-    sharpeDaily,
-    sortinoDaily,
+    sharpeDaily: clampFinite(sharpeDaily),
+    sortinoDaily: clampFinite(sortinoDaily),
+    benchmark,
     sideBreakdown,
     long: sideBreakdown.long,
     short: sideBreakdown.short,
