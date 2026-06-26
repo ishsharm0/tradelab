@@ -1,6 +1,6 @@
 import { buildMetrics } from "../metrics/buildMetrics.js";
 import { calculatePositionSize } from "../utils/positionSizing.js";
-import { applyFill, dayKeyUTC, ocoExitCheck, roundStep } from "./execution.js";
+import { applyFill, dayKeyUTC, financingCost, ocoExitCheck, roundStep } from "./execution.js";
 
 function asNumber(value) {
   const numeric = Number(value);
@@ -236,7 +236,14 @@ export function backtestTicks({
     });
     const direction = open.side === "long" ? 1 : -1;
     const grossPnl = (price - open.entryFill) * direction * open.size;
-    const pnl = grossPnl - (open.entryFeeTotal || 0) - feeTotal;
+    const financing = financingCost({
+      side: open.side,
+      notional: open.entryFill * open.size,
+      fromMs: open.openTime,
+      toMs: tick.time,
+      costs,
+    });
+    const pnl = grossPnl - (open.entryFeeTotal || 0) - feeTotal - financing;
     currentEquity += pnl;
     dayPnl += pnl;
     const trade = {
@@ -246,6 +253,7 @@ export function backtestTicks({
         time: tick.time,
         reason,
         pnl,
+        financing,
       },
     };
     trades.push(trade);

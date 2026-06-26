@@ -5,6 +5,7 @@ import { normalizeCandles } from "../data/csv.js";
 import {
   applyFill,
   clampStop,
+  financingCost,
   touchedLimit,
   ocoExitCheck,
   isEODBar,
@@ -316,7 +317,14 @@ export class BarSystemRunner {
     const entryFill = openPos.entryFill;
     const grossPnl = (exitPx - entryFill) * direction * qty;
     const entryFeePortion = (openPos.entryFeeTotal || 0) * (qty / openPos.initSize);
-    const pnl = grossPnl - entryFeePortion - exitFeeTotal;
+    const financing = financingCost({
+      side: openPos.side,
+      notional: entryFill * qty,
+      fromMs: openPos.openTime,
+      toMs: time,
+      costs: this.options.costs,
+    });
+    const pnl = grossPnl - entryFeePortion - exitFeeTotal - financing;
 
     this.currentEquity += pnl;
     this.dayPnl += pnl;
@@ -361,6 +369,7 @@ export class BarSystemRunner {
         time,
         reason,
         pnl,
+        financing,
         exitATR: openPos._lastATR ?? undefined,
       },
       mfeR: openPos._mfeR ?? 0,
