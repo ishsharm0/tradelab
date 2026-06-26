@@ -468,6 +468,7 @@ const { rsi, macd, bollinger, vwap, supertrend } = require("tradelab/ta");
 | [Data, reporting, and CLI](docs/data-reporting-cli.md) | Data loading, cache behavior, exports, CLI reference                           |
 | [Live trading](docs/live-trading.md)                   | Live engine, broker adapters, paper mode, orchestration, and state persistence |
 | [MCP server](docs/mcp.md)                              | Run the research loop from any MCP-capable agent                               |
+| [Research & overfitting](docs/research.md)             | Monte Carlo, deflated Sharpe, PBO, CPCV, sweep haircut                         |
 | [Strategy examples](docs/examples.md)                  | Mean reversion, breakout, sentiment, LLM, and portfolio strategy patterns      |
 | [API reference](docs/api-reference.md)                 | Compact index of every public export                                           |
 

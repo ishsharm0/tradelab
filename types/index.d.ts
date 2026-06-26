@@ -585,6 +585,35 @@ export interface StrategySummary {
   params: Record<string, StrategyParamSpec>;
 }
 
+export interface ResearchPercentileBands {
+  p5: number;
+  p25?: number;
+  p50: number;
+  p75?: number;
+  p95: number;
+}
+
+export interface MonteCarloResult {
+  iterations: number;
+  blockSize: number;
+  finalEquity: Required<ResearchPercentileBands>;
+  maxDrawdown: Required<ResearchPercentileBands>;
+  pathBands: Array<Pick<ResearchPercentileBands, "p5" | "p50" | "p95">>;
+  probProfit: number;
+}
+
+export interface PboResult {
+  pbo: number;
+  combos: number;
+  medianLogit: number;
+}
+
+export interface CpcvSplit {
+  train: number[];
+  test: number[];
+  testGroups: number[];
+}
+
 /**
  * Run a candle-based backtest.
  *
@@ -637,6 +666,42 @@ export class LlmSignal {
 export function registerStrategy(name: string, def: StrategyDefinition): void;
 export function listStrategies(): StrategySummary[];
 export function getStrategy(name: string): StrategyDefinition["factory"];
+
+export namespace research {
+  function monteCarlo(options: {
+    tradePnls: number[];
+    equityStart?: number;
+    iterations?: number;
+    blockSize?: number;
+    seed?: string | number;
+  }): MonteCarloResult;
+  function deflatedSharpe(options: {
+    sharpe: number;
+    sampleSize: number;
+    numTrials?: number;
+    sharpeStd?: number;
+    skew?: number;
+    kurtosis?: number;
+  }): number;
+  function sweepHaircut(options: { numTrials: number; sharpeStd: number }): {
+    expectedMaxSharpe: number;
+    numTrials: number;
+  };
+  function probabilityOfBacktestOverfitting(
+    performanceMatrix: number[][],
+    options?: { groups?: number }
+  ): PboResult;
+  function combinatorialPurgedSplits(options: {
+    nObservations: number;
+    nGroups?: number;
+    nTestGroups?: number;
+    embargo?: number;
+  }): CpcvSplit[];
+  function combinations(n: number, k: number): number[][];
+  function normalCdf(x: number): number;
+  function normalPpf(p: number): number;
+  function moments(values: number[]): { mean: number; std: number; skew: number; kurtosis: number };
+}
 
 export function getHistoricalCandles(options?: HistoricalDataOptions): Promise<Candle[]>;
 export function backtestHistorical(options: BacktestHistoricalOptions): Promise<BacktestResult>;

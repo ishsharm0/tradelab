@@ -70,6 +70,7 @@ __export(index_exports, {
   periodsPerYear: () => periodsPerYear,
   registerStrategy: () => registerStrategy,
   renderHtmlReport: () => renderHtmlReport,
+  research: () => research_exports,
   saveCandlesToCache: () => saveCandlesToCache,
   structureState: () => structureState,
   swingHigh: () => swingHigh,
@@ -3737,6 +3738,334 @@ function getStrategy(name) {
   return def.factory;
 }
 
+// src/research/index.js
+var research_exports = {};
+__export(research_exports, {
+  combinations: () => combinations,
+  combinatorialPurgedSplits: () => combinatorialPurgedSplits,
+  deflatedSharpe: () => deflatedSharpe,
+  moments: () => moments,
+  monteCarlo: () => monteCarlo,
+  normalCdf: () => normalCdf,
+  normalPpf: () => normalPpf,
+  probabilityOfBacktestOverfitting: () => probabilityOfBacktestOverfitting,
+  sweepHaircut: () => sweepHaircut
+});
+
+// src/utils/random.js
+function xmur32(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i += 1) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = h << 13 | h >>> 19;
+  }
+  return () => {
+    h = Math.imul(h ^ h >>> 16, 2246822507);
+    h = Math.imul(h ^ h >>> 13, 3266489909);
+    return (h ^= h >>> 16) >>> 0;
+  };
+}
+function mulberry322(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = state + 1831565813 >>> 0;
+    let t = Math.imul(state ^ state >>> 15, state | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function makeRng(seed = "tradelab") {
+  const seedFn = xmur32(String(seed));
+  return mulberry322(seedFn());
+}
+function randInt(rng, maxExclusive) {
+  return Math.floor(rng() * maxExclusive);
+}
+
+// src/research/monteCarlo.js
+function percentile2(sorted, p) {
+  if (!sorted.length) return 0;
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * p)));
+  return sorted[idx];
+}
+function maxDrawdownOf(equityPath) {
+  let peak = equityPath[0];
+  let maxDd = 0;
+  for (const e of equityPath) {
+    if (e > peak) peak = e;
+    const dd = peak > 0 ? (peak - e) / peak : 0;
+    if (dd > maxDd) maxDd = dd;
+  }
+  return maxDd;
+}
+function monteCarlo({
+  tradePnls,
+  equityStart = 1e4,
+  iterations = 1e3,
+  blockSize = 1,
+  seed = "tradelab-mc"
+}) {
+  if (!Array.isArray(tradePnls) || tradePnls.length === 0) {
+    throw new Error("monteCarlo() requires a non-empty tradePnls array");
+  }
+  const rng = makeRng(seed);
+  const n = tradePnls.length;
+  const block = Math.max(1, Math.floor(blockSize));
+  const finals = [];
+  const drawdowns = [];
+  const pathSamples = Array.from({ length: n + 1 }, () => []);
+  for (let it = 0; it < iterations; it += 1) {
+    const path6 = [equityStart];
+    let equity = equityStart;
+    let filled = 0;
+    while (filled < n) {
+      const start = randInt(rng, n);
+      for (let k = 0; k < block && filled < n; k += 1) {
+        equity += tradePnls[(start + k) % n];
+        path6.push(equity);
+        filled += 1;
+      }
+    }
+    for (let step = 0; step < path6.length; step += 1) {
+      pathSamples[step].push(path6[step]);
+    }
+    finals.push(equity);
+    drawdowns.push(maxDrawdownOf(path6));
+  }
+  const sortedFinals = [...finals].sort((a, b) => a - b);
+  const sortedDd = [...drawdowns].sort((a, b) => a - b);
+  const pathBands = pathSamples.map((samples) => {
+    const s = [...samples].sort((a, b) => a - b);
+    return { p5: percentile2(s, 0.05), p50: percentile2(s, 0.5), p95: percentile2(s, 0.95) };
+  });
+  const bands = (sorted) => ({
+    p5: percentile2(sorted, 0.05),
+    p25: percentile2(sorted, 0.25),
+    p50: percentile2(sorted, 0.5),
+    p75: percentile2(sorted, 0.75),
+    p95: percentile2(sorted, 0.95)
+  });
+  return {
+    iterations,
+    blockSize: block,
+    finalEquity: bands(sortedFinals),
+    maxDrawdown: bands(sortedDd),
+    pathBands,
+    probProfit: finals.filter((f) => f > equityStart).length / iterations
+  };
+}
+
+// src/research/stats.js
+function normalCdf(x) {
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+  return 0.5 * (1 + sign * y);
+}
+function normalPpf(p) {
+  if (p <= 0) return -Infinity;
+  if (p >= 1) return Infinity;
+  const a = [
+    -39.69683028665376,
+    220.9460984245205,
+    -275.9285104469687,
+    138.357751867269,
+    -30.66479806614716,
+    2.506628277459239
+  ];
+  const b = [
+    -54.47609879822406,
+    161.5858368580409,
+    -155.6989798598866,
+    66.80131188771972,
+    -13.28068155288572
+  ];
+  const c = [
+    -0.007784894002430293,
+    -0.3223964580411365,
+    -2.400758277161838,
+    -2.549732539343734,
+    4.374664141464968,
+    2.938163982698783
+  ];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const plow = 0.02425;
+  const phigh = 1 - plow;
+  let q;
+  let r;
+  if (p < plow) {
+    q = Math.sqrt(-2 * Math.log(p));
+    return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  if (p <= phigh) {
+    q = p - 0.5;
+    r = q * q;
+    return (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  }
+  q = Math.sqrt(-2 * Math.log(1 - p));
+  return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+}
+function moments(values) {
+  const n = values.length;
+  if (n < 2) return { mean: values[0] ?? 0, std: 0, skew: 0, kurtosis: 3 };
+  const mean3 = values.reduce((a, b) => a + b, 0) / n;
+  let m2 = 0;
+  let m3 = 0;
+  let m4 = 0;
+  for (const v of values) {
+    const d = v - mean3;
+    m2 += d * d;
+    m3 += d * d * d;
+    m4 += d * d * d * d;
+  }
+  m2 /= n;
+  m3 /= n;
+  m4 /= n;
+  const std = Math.sqrt(m2);
+  const skew = std === 0 ? 0 : m3 / std ** 3;
+  const kurtosis = m2 === 0 ? 3 : m4 / m2 ** 2;
+  return { mean: mean3, std, skew, kurtosis };
+}
+
+// src/research/deflatedSharpe.js
+var EULER_MASCHERONI = 0.5772156649015329;
+function sweepHaircut({ numTrials, sharpeStd }) {
+  const N = Math.max(1, numTrials);
+  const a = normalPpf(1 - 1 / N);
+  const b = normalPpf(1 - 1 / (N * Math.E));
+  const expectedMaxSharpe = sharpeStd * ((1 - EULER_MASCHERONI) * a + EULER_MASCHERONI * b);
+  return { expectedMaxSharpe, numTrials: N };
+}
+function deflatedSharpe({
+  sharpe,
+  sampleSize,
+  numTrials = 1,
+  sharpeStd = 0,
+  skew = 0,
+  kurtosis = 3
+}) {
+  const sr0 = sweepHaircut({ numTrials, sharpeStd }).expectedMaxSharpe;
+  const denom = Math.sqrt(
+    Math.max(1e-12, 1 - skew * sharpe + (kurtosis - 1) / 4 * sharpe * sharpe)
+  );
+  const z = (sharpe - sr0) * Math.sqrt(Math.max(1, sampleSize - 1)) / denom;
+  return normalCdf(z);
+}
+
+// src/research/combinations.js
+function combinations(n, k) {
+  const result = [];
+  const combo = [];
+  function recurse(start) {
+    if (combo.length === k) {
+      result.push([...combo]);
+      return;
+    }
+    for (let i = start; i < n; i += 1) {
+      combo.push(i);
+      recurse(i + 1);
+      combo.pop();
+    }
+  }
+  recurse(0);
+  return result;
+}
+
+// src/research/pbo.js
+function sharpeOf(returns) {
+  const n = returns.length;
+  if (n < 2) return 0;
+  const mean3 = returns.reduce((a, b) => a + b, 0) / n;
+  let variance = 0;
+  for (const r of returns) variance += (r - mean3) ** 2;
+  variance /= n - 1;
+  const std = Math.sqrt(variance);
+  if (std === 0) {
+    if (mean3 > 0) return Infinity;
+    if (mean3 < 0) return -Infinity;
+    return 0;
+  }
+  return mean3 / std;
+}
+function probabilityOfBacktestOverfitting(performanceMatrix, { groups = 16 } = {}) {
+  const nStrategies = performanceMatrix.length;
+  if (nStrategies < 2) throw new Error("PBO needs at least 2 strategies");
+  const nObs = performanceMatrix[0].length;
+  const S = Math.min(groups, nObs);
+  if (S % 2 !== 0) throw new Error("groups must be even");
+  const groupIdx = Array.from({ length: S }, () => []);
+  for (let i = 0; i < nObs; i += 1) groupIdx[Math.floor(i * S / nObs)].push(i);
+  const isCombos = combinations(S, S / 2);
+  const logits = [];
+  let overfitCount = 0;
+  for (const isGroups of isCombos) {
+    const isSet = new Set(isGroups);
+    const isIndices = [];
+    const osIndices = [];
+    for (let g = 0; g < S; g += 1) {
+      (isSet.has(g) ? isIndices : osIndices).push(...groupIdx[g]);
+    }
+    const isScores = performanceMatrix.map((row) => sharpeOf(isIndices.map((i) => row[i])));
+    const osScores = performanceMatrix.map((row) => sharpeOf(osIndices.map((i) => row[i])));
+    let bestStrategy = 0;
+    for (let s = 1; s < nStrategies; s += 1) {
+      if (isScores[s] > isScores[bestStrategy]) bestStrategy = s;
+    }
+    const winnerOs = osScores[bestStrategy];
+    let rank = 1;
+    for (let s = 0; s < nStrategies; s += 1) {
+      if (s !== bestStrategy && osScores[s] < winnerOs) rank += 1;
+    }
+    const relativeRank = rank / (nStrategies + 1);
+    const logit = Math.log(relativeRank / (1 - relativeRank));
+    logits.push(logit);
+    if (relativeRank <= 0.5) overfitCount += 1;
+  }
+  return {
+    pbo: overfitCount / isCombos.length,
+    combos: isCombos.length,
+    medianLogit: [...logits].sort((a, b) => a - b)[Math.floor(logits.length / 2)]
+  };
+}
+
+// src/research/cpcv.js
+function combinatorialPurgedSplits({
+  nObservations,
+  nGroups = 6,
+  nTestGroups = 2,
+  embargo = 0
+}) {
+  if (!(nObservations > 0)) throw new Error("nObservations must be positive");
+  if (nTestGroups >= nGroups) throw new Error("nTestGroups must be < nGroups");
+  const bounds = [];
+  for (let g = 0; g < nGroups; g += 1) {
+    bounds.push([
+      Math.floor(g * nObservations / nGroups),
+      Math.floor((g + 1) * nObservations / nGroups)
+    ]);
+  }
+  const splits = [];
+  for (const testGroups of combinations(nGroups, nTestGroups)) {
+    const testSet = /* @__PURE__ */ new Set();
+    const purgeZones = [];
+    for (const g of testGroups) {
+      const [start, end] = bounds[g];
+      for (let i = start; i < end; i += 1) testSet.add(i);
+      purgeZones.push([start - embargo, end + embargo]);
+    }
+    const inPurge = (i) => purgeZones.some(([lo, hi]) => i >= lo && i < hi);
+    const train = [];
+    const testIdx = [];
+    for (let i = 0; i < nObservations; i += 1) {
+      if (testSet.has(i)) testIdx.push(i);
+      else if (!inPurge(i)) train.push(i);
+    }
+    splits.push({ train, test: testIdx, testGroups });
+  }
+  return splits;
+}
+
 // src/data/index.js
 var import_path2 = __toESM(require("path"), 1);
 
@@ -4477,6 +4806,7 @@ function exportBacktestArtifacts({
   periodsPerYear,
   registerStrategy,
   renderHtmlReport,
+  research,
   saveCandlesToCache,
   structureState,
   swingHigh,

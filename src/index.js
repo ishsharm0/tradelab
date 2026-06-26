@@ -5,6 +5,7 @@ export { backtestPortfolio } from "./engine/portfolio.js";
 export { LlmSignal } from "./engine/llmSignal.js";
 export { walkForwardOptimize } from "./engine/walkForward.js";
 export { listStrategies, getStrategy, registerStrategy } from "./strategies/index.js";
+export * as research from "./research/index.js";
 
 export { buildMetrics } from "./metrics/buildMetrics.js";
 export { benchmarkStats } from "./metrics/benchmark.js";
