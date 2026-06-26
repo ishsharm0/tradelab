@@ -33,7 +33,9 @@ test("optimize runs every parameter set and returns a ranked leaderboard", async
   assert.equal(out.results.length, parameterSets.length);
   assert.ok(out.leaderboard.length >= 1);
   for (let i = 1; i < out.leaderboard.length; i += 1) {
-    assert.ok(out.leaderboard[i - 1].metrics.profitFactor >= out.leaderboard[i].metrics.profitFactor);
+    assert.ok(
+      out.leaderboard[i - 1].metrics.profitFactor >= out.leaderboard[i].metrics.profitFactor
+    );
   }
   assert.equal(out.best, out.leaderboard[0]);
 });

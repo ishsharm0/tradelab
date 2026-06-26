@@ -55,6 +55,7 @@ __export(index_exports, {
   fetchLatestCandle: () => fetchLatestCandle,
   getHistoricalCandles: () => getHistoricalCandles,
   getStrategy: () => getStrategy,
+  grid: () => grid,
   inWindowsET: () => inWindowsET,
   isSession: () => isSession,
   lastSwing: () => lastSwing,
@@ -65,6 +66,7 @@ __export(index_exports, {
   minutesET: () => minutesET,
   normalizeCandles: () => normalizeCandles,
   offsetET: () => offsetET,
+  optimize: () => optimize,
   parseWindowsCSV: () => parseWindowsCSV,
   pct: () => pct,
   periodsPerYear: () => periodsPerYear,
@@ -3579,6 +3581,93 @@ function walkForwardOptimize({
   };
 }
 
+// src/engine/optimize.js
+var import_node_worker_threads = require("node:worker_threads");
+var import_node_os = __toESM(require("node:os"), 1);
+var import_meta = {};
+function defaultConcurrency() {
+  return Math.max(1, (import_node_os.default.cpus()?.length ?? 2) - 1);
+}
+function scoreValue(metrics, scoreBy) {
+  const v = metrics?.[scoreBy];
+  return Number.isFinite(v) ? v : -Infinity;
+}
+function optimize({
+  candles,
+  signalModulePath,
+  parameterSets,
+  interval,
+  backtestOptions = {},
+  concurrency,
+  scoreBy = "profitFactor"
+}) {
+  if (!Array.isArray(parameterSets) || parameterSets.length === 0) {
+    return Promise.resolve({ results: [], leaderboard: [], best: null });
+  }
+  return new Promise((resolve, reject) => {
+    const poolSize = Math.min(concurrency || defaultConcurrency(), parameterSets.length);
+    const results = new Array(parameterSets.length);
+    const workers = [];
+    let nextIndex = 0;
+    let completed = 0;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      for (const w of workers) w.terminate();
+      const ranked = results.filter((r) => r && r.metrics).sort((a, b) => scoreValue(b.metrics, scoreBy) - scoreValue(a.metrics, scoreBy));
+      resolve({ results, leaderboard: ranked, best: ranked[0] ?? null });
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      for (const w of workers) w.terminate();
+      reject(error);
+    };
+    const dispatch = (worker) => {
+      if (nextIndex >= parameterSets.length) {
+        worker.postMessage({ type: "stop" });
+        return;
+      }
+      const index = nextIndex;
+      nextIndex += 1;
+      worker.postMessage({ type: "run", index, params: parameterSets[index] });
+    };
+    for (let i = 0; i < poolSize; i += 1) {
+      const worker = new import_node_worker_threads.Worker(new URL("./optimizeWorker.js", import_meta.url), {
+        workerData: { candles, signalModulePath, interval, backtestOptions }
+      });
+      workers.push(worker);
+      worker.on("message", (msg) => {
+        if (msg.type === "ready") {
+          dispatch(worker);
+          return;
+        }
+        if (msg.type === "result" || msg.type === "error") {
+          results[msg.index] = msg.type === "result" ? { params: msg.params, metrics: msg.metrics } : { params: msg.params, error: msg.error };
+          completed += 1;
+          if (completed === parameterSets.length) finish();
+          else dispatch(worker);
+        }
+      });
+      worker.on("error", fail);
+    }
+  });
+}
+
+// src/engine/grid.js
+function grid(spec = {}) {
+  const keys = Object.keys(spec);
+  if (!keys.length) return [{}];
+  return keys.reduce(
+    (acc, key) => {
+      const values = Array.isArray(spec[key]) ? spec[key] : [spec[key]];
+      return acc.flatMap((base) => values.map((v) => ({ ...base, [key]: v })));
+    },
+    [{}]
+  );
+}
+
 // src/ta/oscillators.js
 function rsi(closes, period = 14) {
   const out = new Array(closes.length).fill(void 0);
@@ -4791,6 +4880,7 @@ function exportBacktestArtifacts({
   fetchLatestCandle,
   getHistoricalCandles,
   getStrategy,
+  grid,
   inWindowsET,
   isSession,
   lastSwing,
@@ -4801,6 +4891,7 @@ function exportBacktestArtifacts({
   minutesET,
   normalizeCandles,
   offsetET,
+  optimize,
   parseWindowsCSV,
   pct,
   periodsPerYear,

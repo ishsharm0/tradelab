@@ -5,8 +5,11 @@
 export function grid(spec = {}) {
   const keys = Object.keys(spec);
   if (!keys.length) return [{}];
-  return keys.reduce((acc, key) => {
-    const values = Array.isArray(spec[key]) ? spec[key] : [spec[key]];
-    return acc.flatMap((base) => values.map((v) => ({ ...base, [key]: v })));
-  }, [{}]);
+  return keys.reduce(
+    (acc, key) => {
+      const values = Array.isArray(spec[key]) ? spec[key] : [spec[key]];
+      return acc.flatMap((base) => values.map((v) => ({ ...base, [key]: v })));
+    },
+    [{}]
+  );
 }

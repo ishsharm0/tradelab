@@ -411,6 +411,52 @@ const wf = walkForwardOptimize({
 
 In practice, the per-window output matters more than the aggregate headline. If the winning parameters swing wildly from one window to the next, treat that as a real signal.
 
+## Optimization (parallel sweeps)
+
+Use `optimize()` for large parameter sweeps that can run independently across a worker pool.
+
+```js
+import path from "node:path";
+import { optimize, grid } from "tradelab";
+
+const out = await optimize({
+  candles,
+  interval: "1d",
+  signalModulePath: path.resolve("./strategies/emaSignal.js"),
+  parameterSets: grid({ fast: [5, 8, 10], slow: [20, 30, 50], rr: 2 }),
+  concurrency: 4,
+  scoreBy: "sharpeAnnualized",
+});
+
+console.log(out.best?.params, out.best?.metrics);
+```
+
+`signalModulePath` must point to an ESM module that exports `createSignal(params)` or a default factory:
+
+```js
+export function createSignal(params) {
+  return function signal(context) {
+    return null;
+  };
+}
+```
+
+Functions cannot cross the worker boundary, so the signal is passed as a module path plus JSON-like parameter objects. Candles are copied once per worker, not once per parameter set.
+
+The return shape is:
+
+```js
+{
+  (results, // original order, one entry per parameter set
+    leaderboard, // sorted descending by scoreBy
+    best); // leaderboard[0] or null
+}
+```
+
+Each result contains `{ params, metrics }` or `{ params, error }`. Worker IPC only returns compact ranking metrics, not trade logs or replay frames.
+
+`optimize()` is ESM-only in this release because it starts an ESM `worker_threads` worker via `import.meta.url`. Use it from ESM code, for example `node examples/optimize.js`.
+
 ## `buildMetrics(input)`
 
 Most users do not need this directly. Use it when:

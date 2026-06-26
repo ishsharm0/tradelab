@@ -7,7 +7,9 @@ const { candles, signalModulePath, interval, backtestOptions } = workerData;
 const mod = await import(pathToFileURL(signalModulePath).href);
 const createSignal = mod.createSignal ?? mod.default;
 if (typeof createSignal !== "function") {
-  throw new Error(`optimize: ${signalModulePath} must export createSignal(params) or a default factory`);
+  throw new Error(
+    `optimize: ${signalModulePath} must export createSignal(params) or a default factory`
+  );
 }
 
 function pickMetrics(metrics) {

@@ -614,6 +614,18 @@ export interface CpcvSplit {
   testGroups: number[];
 }
 
+export interface OptimizeResultEntry {
+  params: Record<string, unknown>;
+  metrics?: Partial<BacktestMetrics>;
+  error?: string;
+}
+
+export interface OptimizeResult {
+  results: OptimizeResultEntry[];
+  leaderboard: OptimizeResultEntry[];
+  best: OptimizeResultEntry | null;
+}
+
 /**
  * Run a candle-based backtest.
  *
@@ -624,6 +636,16 @@ export interface CpcvSplit {
 export function backtest(options: BacktestOptions): BacktestResult;
 export function backtestAsync(options: BacktestAsyncOptions): Promise<BacktestResult>;
 export function backtestTicks(options: BacktestTickOptions): BacktestResult;
+export function grid(spec?: Record<string, unknown | unknown[]>): Array<Record<string, unknown>>;
+export function optimize(options: {
+  candles: Candle[];
+  signalModulePath: string;
+  parameterSets: Array<Record<string, unknown>>;
+  interval?: string;
+  backtestOptions?: Partial<BacktestOptions>;
+  concurrency?: number;
+  scoreBy?: keyof BacktestMetrics | string;
+}): Promise<OptimizeResult>;
 export function backtestPortfolio(options: {
   systems: PortfolioSystem[];
   equity?: number;
