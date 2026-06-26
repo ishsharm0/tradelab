@@ -63,6 +63,17 @@ export function callSignalWithContext({ signal, context, index, bar, symbol }) {
   }
 }
 
+export async function callSignalWithContextAsync({ signal, context, index, bar, symbol }) {
+  try {
+    return await signal(context);
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `signal() threw at index=${index}, time=${formatIsoTime(bar?.time)}, symbol=${symbol}: ${cause}`
+    );
+  }
+}
+
 export function snapshotOpenPosition(open, markPrice) {
   if (!open) return null;
   const entryPrice = open.entryFill ?? open.entry;
