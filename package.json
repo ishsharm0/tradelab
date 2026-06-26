@@ -7,7 +7,8 @@
   "module": "./src/index.js",
   "types": "./types/index.d.ts",
   "bin": {
-    "tradelab": "bin/tradelab.js"
+    "tradelab": "bin/tradelab.js",
+    "tradelab-mcp": "bin/tradelab-mcp.js"
   },
   "license": "MIT",
   "repository": {
@@ -42,6 +43,9 @@
       "types": "./types/ta.d.ts",
       "import": "./src/ta/index.js",
       "require": "./dist/cjs/ta.cjs"
+    },
+    "./mcp": {
+      "import": "./src/mcp/server.js"
     },
     "./package.json": "./package.json"
   },
@@ -88,5 +92,9 @@
     "globals": "^15.15.0",
     "prettier": "^3.5.3",
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   }
 }
