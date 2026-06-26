@@ -123,11 +123,57 @@ import { LiveEngine, PaperEngine } from "tradelab/live";
 - `parseWindowsCSV(csv)`
 - `inWindowsET(timeMs, windows)`
 
+## Technical analysis (`tradelab/ta`)
+
+TA exports are under a separate entrypoint:
+
+```js
+import { rsi, macd, bollinger, vwap, supertrend } from "tradelab/ta";
+```
+
+Every indicator returns a **full-length array aligned to the input** — warmup positions are `undefined` so values index 1:1 with candles. Oscillators accept a `number[]` of closes; range-based indicators accept `{ high, low, close }` candle arrays.
+
+### Oscillators
+
+| Export                                      | Input        | Returns                       | Description                                              |
+| ------------------------------------------- | ------------ | ----------------------------- | -------------------------------------------------------- |
+| `rsi(closes, period?)`                      | `number[]`   | `(number \| undefined)[]`     | Wilder's RSI; warmup positions are `undefined`           |
+| `macd(closes, fast?, slow?, signalPeriod?)` | `number[]`   | `{ macd, signal, histogram }` | MACD line, signal line, and histogram; all full-length   |
+| `stochastic(bars, kPeriod?, dPeriod?)`      | candle array | `{ k, d }`                    | Stochastic %K and %D; `k` and `d` are full-length arrays |
+
+### Bands & channels
+
+| Export                                         | Input        | Returns                    | Description                                                   |
+| ---------------------------------------------- | ------------ | -------------------------- | ------------------------------------------------------------- |
+| `bollinger(closes, period?, mult?)`            | `number[]`   | `{ middle, upper, lower }` | Bollinger Bands with SMA middle and stddev-scaled outer bands |
+| `donchian(bars, period?)`                      | candle array | `{ upper, lower, middle }` | Donchian channel: rolling highest-high / lowest-low           |
+| `keltner(bars, emaPeriod?, atrPeriod?, mult?)` | candle array | `{ upper, lower, middle }` | Keltner channel: EMA middle with ATR-scaled width             |
+
+### Trend & volume
+
+| Export                             | Input                                 | Returns                   | Description                                                                |
+| ---------------------------------- | ------------------------------------- | ------------------------- | -------------------------------------------------------------------------- |
+| `supertrend(bars, period?, mult?)` | candle array                          | `{ line, direction }`     | Supertrend support/resistance line; `direction` is `1` (up) or `-1` (down) |
+| `vwap(bars)`                       | candle array with `time` and `volume` | `(number \| undefined)[]` | Session VWAP, resets on each UTC calendar day                              |
+
+### Re-exported from main module
+
+| Export                                  | Description                        |
+| --------------------------------------- | ---------------------------------- |
+| `ema(values, period?)`                  | Exponential moving average         |
+| `atr(bars, period?)`                    | Average True Range                 |
+| `swingHigh(bars, index, left?, right?)` | Detect swing high at index         |
+| `swingLow(bars, index, left?, right?)`  | Detect swing low at index          |
+| `detectFVG(bars, index)`                | Detect Fair Value Gap at index     |
+| `lastSwing(bars, index, direction)`     | Find the last swing in a direction |
+| `structureState(bars, index)`           | Assess market structure state      |
+
 ## Types
 
 The package ships declarations in:
 
 - [../types/index.d.ts](../types/index.d.ts) for the main module
 - [../types/live.d.ts](../types/live.d.ts) for `tradelab/live`
+- [../types/ta.d.ts](../types/ta.d.ts) for `tradelab/ta`
 
 <small>[Back to main page](README.md)</small>

@@ -410,6 +410,7 @@ The examples are a good place to start if you want something runnable before wir
 import { backtest, getHistoricalCandles, ema } from "tradelab";
 import { fetchHistorical } from "tradelab/data";
 import { LiveEngine, PaperEngine } from "tradelab/live";
+import { rsi, macd, bollinger, vwap, supertrend } from "tradelab/ta";
 ```
 
 ### CommonJS
@@ -418,6 +419,7 @@ import { LiveEngine, PaperEngine } from "tradelab/live";
 const { backtest, getHistoricalCandles, ema } = require("tradelab");
 const { fetchHistorical } = require("tradelab/data");
 const { LiveEngine, PaperEngine } = require("tradelab/live");
+const { rsi, macd, bollinger, vwap, supertrend } = require("tradelab/ta");
 ```
 
 ---
