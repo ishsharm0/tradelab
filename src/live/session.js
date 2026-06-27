@@ -26,9 +26,10 @@ export class TradingSession {
     qtyStep = 0.001,
     minQty = 0.001,
     maxLeverage = 2,
+    confirmLive = false,
     eventBus,
   } = {}) {
-    if (mode === "live" && !TradingSession.liveAllowed()) {
+    if (mode === "live" && (!TradingSession.liveAllowed() || !confirmLive)) {
       throw new Error(
         "live trading is gated: set TRADELAB_ALLOW_LIVE=true and pass confirmLive:true with a credentialed broker"
       );
@@ -85,6 +86,18 @@ export class TradingSession {
   // Sync event handler — fire-and-forget async OCO work via a stored promise
   _onBrokerFillSync(order) {
     this._record("order:filled", order);
+
+    // Resting entry order (e.g. a limit) just filled — attach its staged bracket.
+    if (this._pendingBracket && String(order.clientOrderId || "").includes("-entry-")) {
+      const staged = this._pendingBracket;
+      this._pendingBracket = null;
+      // simulateBar may still be iterating orders, so schedule attach without awaiting.
+      this._pendingCancelPromise = Promise.resolve(
+        this._attachBracket({ ...staged, receipt: order })
+      );
+      return;
+    }
+
     // Track bracket leg fills for OCO
     const bracket = this.brackets.get(this.symbol);
     if (bracket && (order.orderId === bracket.stopId || order.orderId === bracket.targetId)) {
@@ -347,7 +360,16 @@ export class SessionManager {
       if (!resolvedBroker) throw new Error("live mode requires a credentialed broker");
     }
     if (!resolvedBroker) resolvedBroker = new PaperEngine({ equity });
-    const session = new TradingSession({ id, symbol, interval, broker: resolvedBroker, mode, equity, ...rest });
+    const session = new TradingSession({
+      id,
+      symbol,
+      interval,
+      broker: resolvedBroker,
+      mode,
+      equity,
+      confirmLive,
+      ...rest,
+    });
     await session.start();
     this.sessions.set(session.id, session);
     return session;
@@ -370,6 +392,8 @@ export class SessionManager {
 
   async haltAll() {
     for (const s of this.sessions.values()) await s.stop({ flatten: true });
+    // Remove stopped sessions so list() does not retain them and re-runs don't collide.
+    this.sessions.clear();
   }
 }
 

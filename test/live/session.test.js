@@ -77,6 +77,34 @@ test("live mode without gating throws", () => {
   );
 });
 
+test("bracket: a bar straddling stop AND target fills exactly one leg (no phantom-short)", async () => {
+  const { session } = await freshSession();
+  await session.pushBar(bar(1, 100));
+  await session.placeOrder({ side: "long", type: "market", qty: 10, stop: 98, target: 104 });
+  assert.equal(session.getStatus().openOrders.length, 2);
+  // One wide bar touches both the stop (98) and the target (104).
+  await session.pushBar({ time: 2, open: 100, high: 104, low: 98, close: 100, volume: 100 });
+  const status = session.getStatus();
+  // Exactly one leg filled: session is flat (NOT phantom-short), no resting orders.
+  assert.equal(status.positions.length, 0);
+  assert.equal(status.openOrders.length, 0);
+});
+
+test("bracket attaches for a resting limit entry once it fills", async () => {
+  const { session } = await freshSession();
+  await session.pushBar(bar(1, 100));
+  // Resting limit long below the market; no bracket yet (entry not filled).
+  await session.placeOrder({ side: "long", type: "limit", qty: 10, limitPrice: 99, stop: 97, target: 105 });
+  assert.equal(session.brackets.size, 0);
+  assert.equal(session.getStatus().positions.length, 0);
+  // Push a bar that dips to fill the limit.
+  await session.pushBar({ time: 2, open: 100, high: 100, low: 98, close: 99, volume: 100 });
+  const status = session.getStatus();
+  assert.equal(status.positions.length, 1); // entry filled
+  assert.equal(status.openOrders.length, 2); // stop + target bracket now resting
+  assert.equal(session.brackets.size, 1);
+});
+
 // Task 2 tests
 import { SessionManager } from "../../src/live/session.js";
 
@@ -103,4 +131,7 @@ test("haltAll flattens and stops every session", async () => {
   await mgr.haltAll();
   assert.equal(s.getStatus().running, false);
   assert.equal((await s.getPositions()).length, 0);
+  // haltAll also removes sessions so list() does not retain stopped sessions.
+  assert.equal(mgr.list().length, 0);
+  assert.equal(mgr.get("s2"), null);
 });

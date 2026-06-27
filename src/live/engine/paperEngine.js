@@ -424,6 +424,11 @@ export class PaperEngine extends BrokerAdapter {
 
     const orders = [...this.openOrders.values()].filter((order) => order.symbol === symbol);
     for (const order of orders) {
+      // Skip orders already consumed this pass (e.g. an OCO sibling about to be
+      // canceled, or any order removed by a prior fill). _fillOrder deletes from
+      // openOrders before emitting, so this guard prevents bracket double-fills
+      // when one bar straddles both stop and target.
+      if (!this.openOrders.has(order.orderId)) continue;
       if (order.type === "limit") {
         if (this._touchesLimit(order, normalizedBar)) {
           this._fillOrder(order, order.limitPrice, "limit", normalizedBar.time);
