@@ -12,7 +12,7 @@ export function attachNotifier(session, { onEvent, webhookUrl, events = DEFAULT_
 
   const deliver = async (event, payload) => {
     if (typeof onEvent === "function") {
-      try { onEvent({ event, payload }); } catch { /* non-fatal */ }
+      try { await onEvent({ event, payload }); } catch { /* non-fatal */ }
     }
     if (webhookUrl && typeof fetch === "function") {
       try {
@@ -26,13 +26,13 @@ export function attachNotifier(session, { onEvent, webhookUrl, events = DEFAULT_
   };
 
   const handler = ({ event, payload }) => {
-    if (wanted.has(event)) { deliver(event, payload); return; }
+    if (wanted.has(event)) { deliver(event, payload).catch(() => {}); return; }
     if (drawdownPct > 0 && event === "equity:update") {
       const eq = payload?.equity;
       if (Number.isFinite(eq)) {
         if (peak === null || eq > peak) peak = eq;
         if (peak > 0 && ((peak - eq) / peak) * 100 >= drawdownPct) {
-          deliver("drawdown:breach", { equity: eq, peak, drawdownPct: ((peak - eq) / peak) * 100 });
+          deliver("drawdown:breach", { equity: eq, peak, drawdownPct: ((peak - eq) / peak) * 100 }).catch(() => {});
         }
       }
     }
