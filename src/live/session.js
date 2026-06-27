@@ -37,6 +37,8 @@ export class TradingSession {
     riskPct = 1,
     maxDailyLossPct = 0,
     maxPositionPct = 1,
+    maxGrossExposurePct = 0,
+    maxNetExposurePct = 0,
     qtyStep = 0.001,
     minQty = 0.001,
     maxLeverage = 2,
@@ -68,7 +70,7 @@ export class TradingSession {
     this.minQty = minQty;
     this.maxLeverage = maxLeverage;
     this.eventBus = eventBus || new EventBus();
-    this.riskManager = new RiskManager({ maxDailyLossPct, maxDrawdownPct: 0 });
+    this.riskManager = new RiskManager({ maxDailyLossPct, maxDrawdownPct: 0, maxGrossExposurePct, maxNetExposurePct });
     this.running = false;
     this.events = [];
     this.brackets = new Map(); // symbol -> { stopId, targetId }
@@ -275,6 +277,23 @@ export class TradingSession {
       qty: size,
       notional: size * entryRef,
     };
+
+    const positions = this._cachedPositions ?? [];
+    const newNotional = sizing.notional * ((side === "long" || side === "buy") ? 1 : -1);
+    let gross = Math.abs(sizing.notional);
+    let net = newNotional;
+    for (const p of positions) {
+      const pv = (p.qty ?? 0) * (p.avgPrice ?? p.entryPrice ?? entryRef);
+      const signed = (p.side === "long" || p.side === "buy") ? pv : -pv;
+      gross += Math.abs(pv);
+      net += signed;
+    }
+    const gate = this.riskManager.checkExposure({
+      grossExposure: gross,
+      netExposure: net,
+      equity: this.equity,
+    });
+    if (!gate.ok) throw new Error(`risk rejected: ${gate.reason}`);
 
     const entryClientOrderId = `${this.id}-entry-${Date.now()}`;
     this._entryMeta.set(entryClientOrderId, { sizing, rationale });

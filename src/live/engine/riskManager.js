@@ -21,6 +21,8 @@ export class RiskManager {
       cooldownAfterLossMs: 0,
       allowedSessions: "AUTO",
       allowedWindows: null,
+      maxGrossExposurePct: 0,
+      maxNetExposurePct: 0,
       ...options,
     };
     this.allowedWindows = parseWindowsCSV(this.options.allowedWindows);
@@ -114,6 +116,8 @@ export class RiskManager {
     positionCount = 0,
     positionValue = 0,
     equity = null,
+    grossExposure = undefined,
+    netExposure = undefined,
   } = {}) {
     const base = this.canTrade({ timeMs });
     if (!base.ok) return base;
@@ -132,6 +136,44 @@ export class RiskManager {
       const fraction = Math.abs(positionValue) / eq;
       if (fraction > maxPositionFraction) {
         return { ok: false, reason: "max position size exceeded" };
+      }
+    }
+
+    const grossCap = pctToFraction(this.options.maxGrossExposurePct, 0);
+    if (grossCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(grossExposure)) {
+      if (Math.abs(grossExposure) / eq > grossCap) {
+        return { ok: false, reason: "max gross exposure exceeded" };
+      }
+    }
+
+    const netCap = pctToFraction(this.options.maxNetExposurePct, 0);
+    if (netCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(netExposure)) {
+      if (Math.abs(netExposure) / eq > netCap) {
+        return { ok: false, reason: "max net exposure exceeded" };
+      }
+    }
+
+    return { ok: true, reason: null };
+  }
+
+  /**
+   * Check only the portfolio exposure caps (no session/halt/trade-count checks).
+   * Called from placeOrder after the halt check has already run.
+   */
+  checkExposure({ grossExposure = undefined, netExposure = undefined, equity = null } = {}) {
+    const eq = Number.isFinite(equity) ? equity : this.currentEquity;
+
+    const grossCap = pctToFraction(this.options.maxGrossExposurePct, 0);
+    if (grossCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(grossExposure)) {
+      if (Math.abs(grossExposure) / eq > grossCap) {
+        return { ok: false, reason: "max gross exposure exceeded" };
+      }
+    }
+
+    const netCap = pctToFraction(this.options.maxNetExposurePct, 0);
+    if (netCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(netExposure)) {
+      if (Math.abs(netExposure) / eq > netCap) {
+        return { ok: false, reason: "max net exposure exceeded" };
       }
     }
 
