@@ -430,6 +430,7 @@
       // equity curve
       const series = [];
       let startEquity = null;
+      let upState = true; // colour the curve by actual session P&L, not first-seen point
       const canvas = $("chart");
       const ctx = canvas.getContext("2d");
       function drawChart() {
@@ -451,7 +452,7 @@
         }
         const x = (i) => pad + (i / (series.length - 1)) * (w - pad * 2);
         const y = (v) => h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
-        const up = series[series.length - 1].v >= (startEquity ?? series[0].v);
+        const up = upState;
         const color = up ? "#3fb950" : "#f85149";
         // baseline grid
         ctx.strokeStyle = "rgba(255,255,255,0.05)";
@@ -518,6 +519,7 @@
         setNum($("equity"), s.equity, (v) => fmt(v));
         if (typeof s.equity === "number") pushEquity(s.equity, Date.now());
         const dp = s.dayPnl ?? 0;
+        upState = dp >= 0;
         const dpEl = $("dayPnl");
         dpEl.className = "val num " + (dp >= 0 ? "up" : "down");
         setNum(dpEl, dp, (v) => fmtSigned(v));
