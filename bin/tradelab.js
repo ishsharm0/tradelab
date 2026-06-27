@@ -14,6 +14,7 @@ import {
   saveCandlesToCache,
   walkForwardOptimize,
 } from "../src/index.js";
+import { runPreset } from "../src/cli/runPreset.js";
 import {
   AlpacaBroker,
   BinanceBroker,
@@ -278,6 +279,7 @@ Commands:
   backtest      Run a one-off backtest from Yahoo or CSV data
   portfolio     Run multiple CSV datasets as an equal-weight portfolio
   walk-forward  Run rolling or anchored train/test optimization
+  run           Run a named built-in preset and print a plain-English summary
   live          Run live trading engine (streaming or polling)
   paper         Run live engine in paper broker mode
   status        Read persisted live state
@@ -288,6 +290,8 @@ Examples:
   tradelab backtest --source yahoo --symbol SPY --interval 1d --period 1y
   tradelab backtest --source csv --csvPath ./data/btc.csv --strategy buy-hold --holdBars 3
   tradelab walk-forward --source csv --csvPath ./data/spy.csv --trainBars 120 --testBars 40
+  tradelab run ema-cross --source yahoo --symbol SPY --period 1y
+  tradelab run ema-cross --source csv --csvPath ./data/spy.csv --params '{"fast":5,"slow":15}'
   tradelab live --strategy ./mySignal.js --symbol AAPL --interval 5m --broker alpaca --paper
 
 Options:
@@ -471,6 +475,37 @@ async function commandPrefetch(args) {
     source: "yahoo",
   });
   console.log(`Saved ${candles.length} candles to ${outputPath}`);
+}
+
+async function commandRun(args) {
+  const preset = args._[1];
+  if (!preset) {
+    throw new Error("run requires a preset name (e.g. tradelab run ema-cross)");
+  }
+  const symbol = args.symbol || "PRESET";
+  const interval = args.interval || "1d";
+  const params = parseJsonValue(args.params, {});
+
+  const source = args.source || (args.csvPath ? "csv" : null);
+  let candles;
+  if (source === "csv" || args.csvPath) {
+    candles = loadCandlesFromCSV(args.csvPath);
+  } else if (source === "yahoo" || args.symbol) {
+    candles = await getHistoricalCandles({
+      source: "yahoo",
+      symbol: args.symbol,
+      interval,
+      period: args.period || "1y",
+      cache: args.cache !== "false",
+    });
+  } else {
+    throw new Error(
+      "run requires candle data: provide --source yahoo --symbol TICKER or --source csv --csvPath PATH"
+    );
+  }
+
+  const out = runPreset({ preset, candles, params, symbol, interval });
+  console.log(out.summary);
 }
 
 async function commandImportCsv(args) {
@@ -668,6 +703,7 @@ const commands = {
   backtest: commandBacktest,
   portfolio: commandPortfolio,
   "walk-forward": commandWalkForward,
+  run: commandRun,
   live: commandLive,
   paper: commandPaper,
   status: commandStatus,
