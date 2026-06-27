@@ -24,8 +24,6 @@ await build({
   entryPoints: [path.join(rootDir, "src", "index.js")],
   outfile: path.join(outDir, "index.cjs"),
 });
-// optimize() uses worker_threads with import.meta.url to spawn the ESM worker
-// at src/engine/optimizeWorker.js. It is documented as ESM-only for now.
 
 await build({
   ...shared,
