@@ -87,11 +87,16 @@ Start with `result.metrics` for the summary and `result.positions` for completed
 | Run a parallel parameter sweep     | `optimize({ signalModulePath, parameterSets })`                                                                                         |
 | Use indicators                     | `import { rsi, macd, vwap } from "tradelab/ta"`                                                                                         |
 | Check overfitting risk             | `research.monteCarlo`, `research.deflatedSharpe`                                                                                        |
-| Run in paper or live mode          | `LiveEngine`, `LiveOrchestrator`, `tradelab paper`                                                                                      |
-| Watch a live run locally           | `createDashboardServer({ source })` — equity curve, KPI strip, controls                                                                 |
-| Let MCP clients run research tools | `tradelab-mcp` — `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`        |
-| Let MCP agents trade (paper/live)  | `tradelab-mcp` — `create_session`, `feed_price`, `place_order`, bracket orders, `halt_all` kill-switch (see [docs/mcp.md](docs/mcp.md)) |
-| Export reports and machine data    | `exportBacktestArtifacts`, `exportMetricsJSON`                                                                                          |
+| Run in paper or live mode          | `LiveEngine`, `LiveOrchestrator`, `tradelab paper`                                                                                          |
+| Trade multiple symbols in one session | `SessionManager.create({ symbols: ["BTC","ETH"] })` with per-symbol `pushBar` and `placeOrder`                                         |
+| Watch a live run locally           | `createDashboardServer({ source })` — equity curve, KPI strip, controls                                                                     |
+| Get notified on fills or risk halts | `attachNotifier(session, { onEvent, webhookUrl })` from `tradelab/live`                                                                    |
+| Let MCP clients run research tools | `tradelab-mcp` — `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`            |
+| Let MCP agents trade (paper/live)  | `tradelab-mcp` — `create_session`, `feed_price`, `place_order`, bracket orders, `halt_all` kill-switch (see [docs/mcp.md](docs/mcp.md))     |
+| Track strategy research across runs | `tradelab-mcp` with `research_open`, `research_log`, `research_recall`, `research_close` (see [docs/mcp.md](docs/mcp.md))                |
+| Summarize metrics in plain English | `summarize(metrics)` returns one plain-English paragraph                                                                                    |
+| Run a built-in preset from the CLI | `tradelab run ema-cross --source yahoo --symbol SPY --period 1y`                                                                            |
+| Export reports and machine data    | `exportBacktestArtifacts`, `exportMetricsJSON`                                                                                              |
 
 ## The Signal Contract
 
@@ -269,7 +274,11 @@ Add `--dashboard --dashboardPort 4317` to open a local Server-Sent Events dashbo
 
 **Research tools:** `list_strategies`, `fetch_candles`, `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`
 
+**Research loop tools:** `research_open`, `research_log`, `research_recall`, `research_close` for persistent file-backed hypothesis tracking. `run_backtest` auto-logs when `researchId` is passed.
+
 **Agent trading tools (paper by default; live gated):** `create_session`, `list_sessions`, `session_status`, `feed_price`, `place_order`, `close_position`, `flatten`, `cancel_order`, `account`, `positions`, `recent_events`, `attach_strategy`, `halt_all`
+
+`create_session` accepts a `symbols` array for multi-symbol portfolio sessions. Pass `symbol` to `feed_price` and `place_order` to direct bars and orders to a specific instrument.
 
 Paper trading needs no credentials. Live trading requires `TRADELAB_ALLOW_LIVE=true` and `confirmLive: true` plus a credentialed broker. `halt_all` is an emergency kill-switch that flattens all positions and stops every session.
 
@@ -292,8 +301,11 @@ Use it from any MCP client that can launch a stdio server:
 tradelab backtest --source yahoo --symbol SPY --interval 1d --period 1y
 tradelab portfolio --csvPaths ./spy.csv,./qqq.csv --symbols SPY,QQQ
 tradelab walk-forward --source yahoo --symbol QQQ --interval 1d --period 2y
+tradelab run ema-cross --source yahoo --symbol SPY --period 1y
 tradelab status --dir ./output/live-state
 ```
+
+`tradelab run <preset>` runs a named built-in strategy on Yahoo or CSV data and prints a plain-English summary. Pass `--params '{"fast":5,"slow":20}'` to override defaults.
 
 ## Documentation
 

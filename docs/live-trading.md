@@ -151,6 +151,136 @@ tradelab paper \
   --once true
 ```
 
+## Multi-Symbol Portfolio Sessions
+
+`TradingSession` accepts a `symbols` array so one session can trade multiple instruments independently against a shared broker.
+
+```js
+import { SessionManager, PaperEngine } from "tradelab/live";
+
+const manager = new SessionManager();
+const session = await manager.create({
+  id: "crypto-portfolio",
+  symbols: ["BTC", "ETH"],
+  interval: "1h",
+  equity: 20_000,
+  riskPct: 1,
+  maxGrossExposurePct: 150, // cap total gross notional at 150% of equity
+  broker: new PaperEngine({ equity: 20_000 }),
+});
+```
+
+Feed bars and place orders per symbol:
+
+```js
+await session.pushBar({ time, open, high, low, close, volume }, "BTC");
+await session.pushBar({ time, open, high, low, close, volume }, "ETH");
+
+await session.placeOrder({ symbol: "BTC", side: "long", riskPct: 1, stop: 29_500, rr: 3 });
+await session.placeOrder({ symbol: "ETH", side: "long", riskPct: 1, stop: 1_900, rr: 2 });
+```
+
+Close a single position without touching the other:
+
+```js
+await session.closePosition("ETH");
+```
+
+Per-symbol accessors:
+
+```js
+session.lastPriceFor("BTC");         // last close fed via pushBar
+session.candleBufferFor("ETH");      // up to 200 candles
+```
+
+`getStatus()` now includes a `symbols` array alongside the primary `symbol`:
+
+```js
+const status = session.getStatus();
+// { id, symbol: "BTC", symbols: ["BTC", "ETH"], positions, openOrders, equity, ... }
+```
+
+Single-symbol usage (`symbol: "AAPL"`) is unchanged. `session.symbol`, `session.lastPrice`, and `session.candleBuffer` all still work as before.
+
+## Exposure Caps
+
+Pass `maxGrossExposurePct` or `maxNetExposurePct` to `SessionManager.create()` (or directly to `TradingSession`) to cap portfolio exposure. Both default to `0` (off).
+
+| Option                | Meaning                                                                     |
+| --------------------- | --------------------------------------------------------------------------- |
+| `maxGrossExposurePct` | Maximum sum of absolute position notional as a percent of equity            |
+| `maxNetExposurePct`   | Maximum absolute net long/short notional imbalance as a percent of equity   |
+
+When a `placeOrder()` call would push exposure past a cap, it throws:
+
+```
+Error: risk rejected: max gross exposure exceeded
+```
+
+The check includes the pending order size, so the cap is evaluated before a fill, not after.
+
+## Trade Attribution
+
+Every `order:submitted` and `order:filled` event now carries a `sizing` block that records how the position was sized:
+
+```js
+session.eventBus.onAny(({ event, payload }) => {
+  if (event === "order:filled") {
+    console.log(payload.sizing);
+    // {
+    //   entry: 100, stop: 98, target: 104, rr: 2,
+    //   riskFraction: 0.01, riskAmount: 100,
+    //   qty: 50, notional: 5000
+    // }
+    if (payload.rationale) console.log(payload.rationale);
+  }
+});
+```
+
+Pass `rationale` to `placeOrder()` to attach a free-text note that propagates to all fill events for that order:
+
+```js
+await session.placeOrder({
+  symbol: "AAPL",
+  side: "long",
+  riskPct: 1,
+  stop: 148,
+  rr: 2,
+  rationale: "EMA cross on hourly, trend continuation",
+});
+```
+
+Bracket legs carry `parentEntryId` (the client order id of the entry) and a `leg` field (`"stop"` or `"target"`), making it straightforward to correlate fills across entry and exit legs.
+
+## Event Notifier
+
+`attachNotifier()` wires a callback and/or a webhook URL to a session's event bus.
+
+```js
+import { attachNotifier } from "tradelab/live";
+
+const unsubscribe = attachNotifier(session, {
+  events: ["order:filled", "risk:halt"],
+  onEvent({ event, payload }) {
+    console.log(event, payload);
+  },
+  webhookUrl: "https://hooks.example.com/tradelab",
+  drawdownPct: 5, // also fires "drawdown:breach" when equity drops 5% from peak
+});
+
+// When done:
+unsubscribe();
+```
+
+`attachNotifier` options:
+
+| Option        | Default                          | Meaning                                                  |
+| ------------- | -------------------------------- | -------------------------------------------------------- |
+| `events`      | `["order:filled","risk:halt"]`   | Events to forward                                        |
+| `onEvent`     | `undefined`                      | Async callback `({ event, payload }) => void`            |
+| `webhookUrl`  | `undefined`                      | HTTP endpoint; receives `POST` with JSON body            |
+| `drawdownPct` | `0`                              | Also fires `drawdown:breach` when equity falls this far  |
+
 ## Run Multiple Systems
 
 Use `LiveOrchestrator` when several systems share one account and broker.

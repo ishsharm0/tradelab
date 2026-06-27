@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-27
+
+### Added
+
+- **Multi-symbol portfolio sessions**
+  - `SessionManager.create({ symbols: ["BTC", "ETH"] })` creates a single session that tracks multiple instruments against a shared broker.
+  - `pushBar(bar, symbol)` and `placeOrder({ symbol })` target a specific instrument; bracket OCO is managed per-symbol.
+  - `closePosition(symbol)` cancels the resting bracket for that symbol before submitting the flattening order.
+  - Per-symbol read accessors: `lastPriceFor(sym)` and `candleBufferFor(sym)`.
+  - `getStatus()` now includes a `symbols` array alongside the primary `symbol`. Single-symbol usage (`symbol: "AAPL"`) is unchanged.
+
+- **Portfolio exposure caps**
+  - `maxGrossExposurePct` and `maxNetExposurePct` options on `TradingSession` and `SessionManager.create()`. Both default to `0` (disabled).
+  - Enforced in `placeOrder()` before any broker call; throws `risk rejected: <reason>` when the cap is breached.
+  - The `RiskManager.checkExposure()` method is the shared gate used by both `canOpenPosition()` and `placeOrder()`.
+
+- **Trade attribution on order events**
+  - `order:submitted` and `order:filled` events now include a `sizing` block: `{ entry, stop, target, rr, riskFraction, riskAmount, qty, notional }`.
+  - Pass `rationale` to `placeOrder()` to attach a free-text note that propagates to all fill events for that order.
+  - Bracket legs carry `parentEntryId` (the entry's client order id) and a `leg` field (`"stop"` or `"target"`).
+
+- **Agent research loop**
+  - `createResearchStore({ dir? })` from `tradelab` returns `{ open, log, recall, close }` for file-backed hypothesis tracking.
+  - MCP tools `research_open`, `research_log`, `research_recall`, `research_close` expose the store over stdio.
+  - `run_backtest` accepts `researchId` and auto-logs the backtest result plus a Deflated Sharpe verdict (`{ deflatedSharpe, overfit, note }`) without a separate `research_log` call.
+
+- **Multi-symbol support in MCP live tools**
+  - `create_session` accepts a `symbols` array.
+  - `feed_price`, `place_order`, `close_position`, and `attach_strategy` accept an optional `symbol` argument to route operations to a specific instrument.
+
+- **`summarize(metrics)`**
+  - Exported from `tradelab`. Renders a `buildMetrics` output object as one plain-English paragraph. Accepts an optional `verdict` object to append an overfit caution sentence.
+
+- **`tradelab run <preset>` CLI subcommand**
+  - Runs a named built-in strategy on Yahoo or CSV data and prints the `summarize()` paragraph to stdout.
+  - Accepts `--params '{"fast":5}'` to override strategy defaults.
+
+- **`attachNotifier(session, opts)`**
+  - Exported from `tradelab/live`. Subscribes a callback and/or webhook URL to a session's event bus.
+  - Options: `events` (which events to forward), `onEvent` (async callback), `webhookUrl` (HTTP POST endpoint), `drawdownPct` (fires `drawdown:breach` when equity falls this far from peak).
+  - Returns an unsubscribe function.
+
 ## [1.2.1] - 2026-06-27
 
 ### Fixed

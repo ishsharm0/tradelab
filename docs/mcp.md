@@ -94,40 +94,77 @@ Local checkout example:
 | `fetch_candles`      | Load Yahoo or CSV candles and return first/last bars                  |
 | `run_backtest`       | Run one named strategy and return compact metrics                     |
 | `walk_forward`       | Run a parameter grid through walk-forward validation                  |
-| `analyze_robustness` | Backtest + Monte Carlo + Deflated Sharpe — validate before you trade  |
+| `analyze_robustness` | Backtest + Monte Carlo + Deflated Sharpe; validate before you trade   |
 | `optimize_strategy`  | In-process grid sweep; returns a leaderboard sorted by chosen metric  |
 | `compare_strategies` | Run several named strategies on the same dataset, ranked head-to-head |
 | `candle_stats`       | Sanity-check candle data: count, date range, price range, interval    |
+
+### Research loop tools
+
+| Tool               | Args (required)       | Returns                                              |
+| ------------------ | --------------------- | ---------------------------------------------------- |
+| `research_open`    | `id`, `goal?`         | Record with `id`, `goal`, `entries`, `createdAt`     |
+| `research_log`     | `id`, `hypothesis?`, `params?`, `metrics?`, `verdict?` | Appended entry |
+| `research_recall`  | `id`, `limit?`        | Recent entries plus a synthesized `summary` string   |
+| `research_close`   | `id`                  | Final record with `closedAt` timestamp               |
+
+Research sessions are file-backed in `.tradelab/research/` (one JSON file per `id`). They persist across MCP server restarts so agents can resume a session after a context reset.
+
+`run_backtest` also accepts a `researchId` argument. When provided, it auto-logs the backtest result and a Deflated Sharpe verdict to the session without requiring a separate `research_log` call:
+
+```json
+{
+  "data": { "source": "yahoo", "symbol": "SPY", "interval": "1d", "period": "2y" },
+  "strategy": "ema-cross",
+  "params": { "fast": 10, "slow": 30 },
+  "researchId": "spy-ema-study",
+  "numTrials": 3
+}
+```
+
+The auto-logged verdict contains:
+
+```json
+{
+  "deflatedSharpe": 0.87,
+  "overfit": true,
+  "note": "PSR 87.0%"
+}
+```
+
+`overfit: true` means the Probabilistic Sharpe Ratio fell below the 0.9 threshold given the number of trials.
 
 Tool responses are intentionally compact. They are meant for planning and comparison, not for replacing full HTML/CSV/JSON reports from the CLI.
 
 ### Live trading tools
 
-| Tool              | Args (required)                                          | Returns                              |
-| ----------------- | -------------------------------------------------------- | ------------------------------------ |
-| `create_session`  | `sessionId`, `symbol`                                    | session status snapshot              |
-| `list_sessions`   | —                                                        | array of session statuses            |
-| `session_status`  | `sessionId`                                              | full refresh (positions/orders/risk) |
-| `feed_price`      | `sessionId`, `bar` OR `price`                            | status after fills                   |
-| `place_order`     | `sessionId`, `side`, `type?`, `qty?` OR `riskPct`+`stop` | order receipt                        |
-| `close_position`  | `sessionId`, `symbol?`                                   | order receipt                        |
-| `flatten`         | `sessionId`                                              | `{ ok: true }`                       |
-| `cancel_order`    | `sessionId`, `orderId`                                   | `{ ok: true }`                       |
-| `account`         | `sessionId`                                              | broker account info                  |
-| `positions`       | `sessionId`                                              | open positions                       |
-| `recent_events`   | `sessionId`, `limit?`                                    | event log                            |
-| `attach_strategy` | `sessionId`, `strategy`, `params?`                       | `{ ok: true }`                       |
-| `halt_all`        | —                                                        | `{ ok: true, sessionsHalted: N }`    |
+| Tool              | Args (required)                                               | Returns                              |
+| ----------------- | ------------------------------------------------------------- | ------------------------------------ |
+| `create_session`  | `sessionId`, `symbol` OR `symbols`                            | session status snapshot              |
+| `list_sessions`   | —                                                             | array of session statuses            |
+| `session_status`  | `sessionId`                                                   | full refresh (positions/orders/risk) |
+| `feed_price`      | `sessionId`, `bar` OR `price`, `symbol?`                      | status after fills                   |
+| `place_order`     | `sessionId`, `side`, `type?`, `qty?` OR `riskPct`+`stop`, `symbol?` | order receipt               |
+| `close_position`  | `sessionId`, `symbol?`                                        | order receipt                        |
+| `flatten`         | `sessionId`                                                   | `{ ok: true }`                       |
+| `cancel_order`    | `sessionId`, `orderId`                                        | `{ ok: true }`                       |
+| `account`         | `sessionId`                                                   | broker account info                  |
+| `positions`       | `sessionId`                                                   | open positions                       |
+| `recent_events`   | `sessionId`, `limit?`                                         | event log                            |
+| `attach_strategy` | `sessionId`, `strategy`, `params?`, `symbol?`                 | `{ ok: true }`                       |
+| `halt_all`        | —                                                             | `{ ok: true, sessionsHalted: N }`    |
 
 ## Agent trading loop
 
 A typical autonomous paper-trading loop:
 
-1. Call `create_session` with `sessionId`, `symbol`, and `equity` (paper by default).
-2. Call `feed_price` with each new bar as it arrives — fills resting bracket orders automatically.
-3. Call `place_order` with `riskPct` + `stop` to size automatically; add `target` or `rr` for a bracket.
-4. Call `session_status` any time for a snapshot of positions, orders, equity, and risk state.
+1. Call `create_session` with `sessionId`, `symbol` (or `symbols` for a multi-symbol session), and `equity` (paper by default).
+2. Call `feed_price` with each new bar as it arrives, passing `symbol` when tracking more than one instrument. Fills resting bracket orders automatically.
+3. Call `place_order` with `riskPct` + `stop` to size automatically; add `target` or `rr` for a bracket. Pass `symbol` for multi-symbol sessions.
+4. Call `session_status` any time for a snapshot of positions, orders, equity, and risk state. The snapshot includes a `symbols` array.
 5. Call `flatten` or `halt_all` to emergency-close everything.
+
+For multi-symbol sessions you can also pass `maxGrossExposurePct` or `maxNetExposurePct` to `create_session` to cap portfolio-level exposure. Orders that would breach the cap are rejected before they reach the broker.
 
 If you attach a strategy with `attach_strategy`, `feed_price` will auto-evaluate it each bar and place orders when the session is flat. Attached strategies receive the same `{ candles, index, bar, equity, openPosition, pendingOrder }` context as `backtest()`, and returned order intents default to a market order unless `type` is set.
 
@@ -139,6 +176,38 @@ If you attach a strategy with `attach_strategy`, `feed_price` will auto-evaluate
 4. Call `run_backtest` with `strategy`, `params`, and either `candles` or `data`.
 5. Inspect trade count, profit factor, drawdown, return, and Sharpe fields.
 6. Call `walk_forward` with a grid to see whether parameters hold up out of sample.
+
+## Agent Research Loop
+
+The research loop tools let an agent track hypothesis iteration across many `run_backtest` calls without losing context:
+
+1. Call `research_open` with an `id` and a plain-text `goal`.
+2. For each parameter set you want to test: call `run_backtest` with `researchId` set to that `id`. The result is auto-logged with a Deflated Sharpe verdict.
+3. Alternatively, call `research_log` directly to record results from external tools or your own computations.
+4. Call `research_recall` at any time to get the last N entries plus a synthesized one-liner: best Sharpe, how many runs flagged as overfit.
+5. Call `research_close` when the study is complete.
+
+```json
+// Step 1: open
+{ "id": "spy-cross-study", "goal": "Find the best EMA pair for SPY daily" }
+
+// Step 2: run with auto-logging
+{
+  "data": { "source": "yahoo", "symbol": "SPY", "interval": "1d", "period": "3y" },
+  "strategy": "ema-cross",
+  "params": { "fast": 10, "slow": 30 },
+  "researchId": "spy-cross-study"
+}
+
+// Step 4: recall
+{ "id": "spy-cross-study", "limit": 10 }
+// returns: { goal, entries: [...], summary: "Best Sharpe so far: 1.42 via {fast:10,slow:30}. 1 of 4 flagged overfit." }
+
+// Step 5: close
+{ "id": "spy-cross-study" }
+```
+
+Research files are stored in `.tradelab/research/` in the directory where the MCP server was launched. They persist across server restarts.
 
 ## Example Calls
 
