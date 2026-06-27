@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-26
+
+### Added
+
+- **MCP agent trading (paper and live sessions)**
+  - New `TradingSession` class and `SessionManager` class exported from `tradelab/live`, enabling agents to manage real paper or live trading sessions programmatically.
+  - `SessionManager.create()` spins up a session backed by `PaperEngine` (default) or a credentialed live broker; `SessionManager.haltAll()` is the process-level kill-switch that flattens all positions and clears every session.
+  - `TradingSession.placeOrder()` supports risk-sized **bracket orders**: a single call with `stop` / `target` / `rr` fields submits the entry plus a protective stop and a profit target as OCO legs; a bar that straddles both stop and target no longer double-fills.
+  - Day-loss risk halts: `maxDailyLossPct` triggers an automatic halt via `RiskManager`; further `placeOrder()` calls throw until the session is stopped.
+  - Live-mode gating: live trading requires `TRADELAB_ALLOW_LIVE=true` (env var) **and** `confirmLive: true` passed to `create()`; paper is the default and needs no credentials or flags.
+
+- **New MCP live-trading tools** (exposed via `tradelab-mcp`)
+  - `create_session` — create a paper or live session with equity, risk, and interval settings.
+  - `list_sessions` — list all active sessions and their current status.
+  - `session_status` — get a full refreshed snapshot (positions, open orders, equity, risk state).
+  - `feed_price` — push an OHLCV bar (or a single price) to advance paper simulation and trigger fills.
+  - `place_order` — place a market or limit order, optionally risk-sized with a bracket stop/target.
+  - `close_position` — close an open position via an opposite market order.
+  - `flatten` — flatten all positions and cancel all open orders in a session.
+  - `cancel_order` — cancel a specific open order.
+  - `account` — fetch broker account details (equity, cash, buying power).
+  - `positions` — list all open positions in a session.
+  - `recent_events` — retrieve recent session events (fills, risk changes, bars) for monitoring.
+  - `attach_strategy` — attach a named built-in strategy that auto-evaluates on each `feed_price` and places orders when flat.
+  - `halt_all` — emergency kill-switch: flattens all positions and stops every active session.
+
+- **MCP research-plus tools** (exposed via `tradelab-mcp`)
+  - `analyze_robustness` — runs a backtest then Monte Carlo simulation and Deflated Sharpe ratio on the realized trade P&Ls; degrades gracefully with fewer than two trades.
+  - `optimize_strategy` — in-process grid sweep returning a leaderboard ranked by a chosen metric (default: `profitFactor`).
+  - `compare_strategies` — runs multiple named strategies on the same candle dataset and returns a ranked comparison.
+  - `candle_stats` — returns shape statistics (count, date range, price range, estimated interval) for a candle array or data spec; useful for sanity-checking data before backtesting.
+
+- **Dashboard overhaul**
+  - Redesigned realtime cockpit with equity curve, KPI strip, positions/orders tables, severity-colored event feed, and a risk-halt banner.
+  - Live **Flatten / Stop / Cancel** controls in the dashboard UI via a new `POST /command` endpoint (whitelisted methods: `flatten`, `stop`, `closePosition`, `cancelOrder`).
+  - `GET /state` now calls `source.refresh()` before returning, so the state snapshot is always current.
+
+### Changed
+
+- MCP server version is now read dynamically from `package.json` via `createRequire`; no separate version constant to update on release.
+
+### Fixed
+
+- Paper-broker bracket orders: a price bar that straddled both the stop and the target could trigger a double-fill, flipping a position to the opposite side. The OCO cancel now runs before the sibling leg can fill.
+- Dashboard equity curve color now reflects actual session P&L rather than a static value.
+
 ## [1.1.0] - 2026-06-26
 
 ### Added

@@ -64,20 +64,21 @@ Start with `result.metrics` for the summary and `result.positions` for completed
 
 ## What You Can Build
 
-| Goal                               | API or command                                     |
-| ---------------------------------- | -------------------------------------------------- |
-| Backtest one strategy              | `backtest({ candles, signal })`                    |
-| Backtest an async strategy         | `backtestAsync({ candles, signal })`               |
-| Replay tick or quote data          | `backtestTicks({ ticks, signal })`                 |
-| Run several systems together       | `backtestPortfolio({ systems })`                   |
-| Test parameter stability           | `walkForwardOptimize(options)`                     |
-| Run a parallel parameter sweep     | `optimize({ signalModulePath, parameterSets })`    |
-| Use indicators                     | `import { rsi, macd, vwap } from "tradelab/ta"`    |
-| Check overfitting risk             | `research.monteCarlo`, `research.deflatedSharpe`   |
-| Run in paper or live mode          | `LiveEngine`, `LiveOrchestrator`, `tradelab paper` |
-| Watch a live run locally           | `createDashboardServer({ source })`                |
-| Let MCP clients run research tools | `tradelab-mcp`                                     |
-| Export reports and machine data    | `exportBacktestArtifacts`, `exportMetricsJSON`     |
+| Goal                               | API or command                                                                                                                          |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Backtest one strategy              | `backtest({ candles, signal })`                                                                                                         |
+| Backtest an async strategy         | `backtestAsync({ candles, signal })`                                                                                                    |
+| Replay tick or quote data          | `backtestTicks({ ticks, signal })`                                                                                                      |
+| Run several systems together       | `backtestPortfolio({ systems })`                                                                                                        |
+| Test parameter stability           | `walkForwardOptimize(options)`                                                                                                          |
+| Run a parallel parameter sweep     | `optimize({ signalModulePath, parameterSets })`                                                                                         |
+| Use indicators                     | `import { rsi, macd, vwap } from "tradelab/ta"`                                                                                         |
+| Check overfitting risk             | `research.monteCarlo`, `research.deflatedSharpe`                                                                                        |
+| Run in paper or live mode          | `LiveEngine`, `LiveOrchestrator`, `tradelab paper`                                                                                      |
+| Watch a live run locally           | `createDashboardServer({ source })` — equity curve, KPI strip, controls                                                                 |
+| Let MCP clients run research tools | `tradelab-mcp` — `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`        |
+| Let MCP agents trade (paper/live)  | `tradelab-mcp` — `create_session`, `feed_price`, `place_order`, bracket orders, `halt_all` kill-switch (see [docs/mcp.md](docs/mcp.md)) |
+| Export reports and machine data    | `exportBacktestArtifacts`, `exportMetricsJSON`                                                                                          |
 
 ## The Signal Contract
 
@@ -251,12 +252,13 @@ Add `--dashboard --dashboardPort 4317` to open a local Server-Sent Events dashbo
 
 ## MCP Server
 
-`tradelab-mcp` exposes four tools over stdio:
+`tradelab-mcp` exposes research and live-trading tools over stdio to any MCP-capable agent (Claude Desktop, Cursor, etc.). See [docs/mcp.md](docs/mcp.md) for the full tool reference and agent trading guide.
 
-- `list_strategies`
-- `fetch_candles`
-- `run_backtest`
-- `walk_forward`
+**Research tools:** `list_strategies`, `fetch_candles`, `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`
+
+**Agent trading tools (paper by default; live gated):** `create_session`, `list_sessions`, `session_status`, `feed_price`, `place_order`, `close_position`, `flatten`, `cancel_order`, `account`, `positions`, `recent_events`, `attach_strategy`, `halt_all`
+
+Paper trading needs no credentials. Live trading requires `TRADELAB_ALLOW_LIVE=true` and `confirmLive: true` plus a credentialed broker. `halt_all` is an emergency kill-switch that flattens all positions and stops every session.
 
 Use it from any MCP client that can launch a stdio server:
 
@@ -296,7 +298,7 @@ tradelab status --dir ./output/live-state
 ```js
 import { backtest, getHistoricalCandles } from "tradelab";
 import { rsi, macd, vwap } from "tradelab/ta";
-import { LiveEngine, PaperEngine } from "tradelab/live";
+import { LiveEngine, PaperEngine, TradingSession, SessionManager } from "tradelab/live";
 ```
 
 CommonJS is supported for the main, data, live, and TA entry points:
