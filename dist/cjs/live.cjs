@@ -52,6 +52,7 @@ __export(index_exports, {
   StateManager: () => StateManager,
   StorageProvider: () => StorageProvider,
   TradingSession: () => TradingSession,
+  attachNotifier: () => attachNotifier,
   createAlpacaBroker: () => createAlpacaBroker,
   createBinanceBroker: () => createBinanceBroker,
   createBrokerFeed: () => createBrokerFeed,
@@ -1881,6 +1882,8 @@ var RiskManager = class {
       cooldownAfterLossMs: 0,
       allowedSessions: "AUTO",
       allowedWindows: null,
+      maxGrossExposurePct: 0,
+      maxNetExposurePct: 0,
       ...options
     };
     this.allowedWindows = parseWindowsCSV(this.options.allowedWindows);
@@ -1957,7 +1960,9 @@ var RiskManager = class {
     timeMs = Date.now(),
     positionCount = 0,
     positionValue = 0,
-    equity = null
+    equity = null,
+    grossExposure = void 0,
+    netExposure = void 0
   } = {}) {
     const base = this.canTrade({ timeMs });
     if (!base.ok) return base;
@@ -1973,6 +1978,35 @@ var RiskManager = class {
       const fraction = Math.abs(positionValue) / eq;
       if (fraction > maxPositionFraction) {
         return { ok: false, reason: "max position size exceeded" };
+      }
+    }
+    return this._checkExposureCaps({ grossExposure, netExposure, equity: eq });
+  }
+  /**
+   * Check only the portfolio exposure caps (no session/halt/trade-count checks).
+   * Called from placeOrder after the halt check has already run.
+   */
+  checkExposure({ grossExposure = void 0, netExposure = void 0, equity = null } = {}) {
+    const eq = Number.isFinite(equity) ? equity : this.currentEquity;
+    return this._checkExposureCaps({ grossExposure, netExposure, equity: eq });
+  }
+  /**
+   * Shared gross/net exposure cap logic used by canOpenPosition and checkExposure.
+   * Expects a resolved equity value (NaN/null fallback already applied by caller).
+   * Returns { ok: true, reason: null } when within caps or caps are disabled.
+   */
+  _checkExposureCaps({ grossExposure = void 0, netExposure = void 0, equity } = {}) {
+    const eq = equity;
+    const grossCap = pctToFraction(this.options.maxGrossExposurePct, 0);
+    if (grossCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(grossExposure)) {
+      if (Math.abs(grossExposure) / eq > grossCap) {
+        return { ok: false, reason: "max gross exposure exceeded" };
+      }
+    }
+    const netCap = pctToFraction(this.options.maxNetExposurePct, 0);
+    if (netCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(netExposure)) {
+      if (Math.abs(netExposure) / eq > netCap) {
+        return { ok: false, reason: "max net exposure exceeded" };
       }
     }
     return { ok: true, reason: null };
@@ -3496,6 +3530,7 @@ var TradingSession = class _TradingSession {
   constructor({
     id,
     symbol,
+    symbols,
     interval = "1m",
     broker,
     mode = "paper",
@@ -3503,6 +3538,8 @@ var TradingSession = class _TradingSession {
     riskPct = 1,
     maxDailyLossPct = 0,
     maxPositionPct = 1,
+    maxGrossExposurePct = 0,
+    maxNetExposurePct = 0,
     qtyStep = 1e-3,
     minQty = 1e-3,
     maxLeverage = 2,
@@ -3515,9 +3552,11 @@ var TradingSession = class _TradingSession {
       );
     }
     if (!broker) throw new Error("TradingSession requires a broker (PaperEngine by default)");
-    if (!symbol) throw new Error("TradingSession requires a symbol");
-    this.id = id || `${symbol}-${interval}`;
-    this.symbol = symbol;
+    const symbolList = Array.isArray(symbols) && symbols.length ? symbols : symbol ? [symbol] : null;
+    if (!symbolList) throw new Error("TradingSession requires a symbol or symbols");
+    this.symbols = symbolList;
+    this.symbol = symbolList[0];
+    this.id = id || `${this.symbol}-${interval}`;
     this.interval = interval;
     this.broker = broker;
     this.mode = mode;
@@ -3529,17 +3568,61 @@ var TradingSession = class _TradingSession {
     this.minQty = minQty;
     this.maxLeverage = maxLeverage;
     this.eventBus = eventBus || new EventBus();
-    this.riskManager = new RiskManager({ maxDailyLossPct, maxDrawdownPct: 0 });
-    this.lastPrice = null;
+    this.riskManager = new RiskManager({ maxDailyLossPct, maxDrawdownPct: 0, maxGrossExposurePct, maxNetExposurePct });
     this.running = false;
     this.events = [];
     this.brackets = /* @__PURE__ */ new Map();
-    this._pendingBracket = null;
+    this._pendingBrackets = /* @__PURE__ */ new Map();
+    this._entryMeta = /* @__PURE__ */ new Map();
+    this._legMeta = /* @__PURE__ */ new Map();
     this._cachedPositions = [];
     this._cachedOpenOrders = [];
-    this.candleBuffer = [];
-    this._strategy = null;
+    this._lastPrice = /* @__PURE__ */ new Map();
+    this._candleBuffers = /* @__PURE__ */ new Map();
+    this._strategies = /* @__PURE__ */ new Map();
+    for (const sym of this.symbols) this._candleBuffers.set(sym, []);
+    this._wasHalted = false;
+    this._coidSeq = 0;
     this._wireBrokerEvents();
+  }
+  // Back-compat getters/setters for single-symbol usage and MCP feed_price handler
+  get lastPrice() {
+    return this._lastPrice.get(this.symbol) ?? null;
+  }
+  set lastPrice(v) {
+    this._lastPrice.set(this.symbol, v);
+  }
+  get candleBuffer() {
+    return this._candleBuffers.get(this.symbol) ?? [];
+  }
+  set candleBuffer(v) {
+    this._candleBuffers.set(this.symbol, v);
+  }
+  get _strategy() {
+    return this._strategies.get(this.symbol) ?? null;
+  }
+  set _strategy(fn) {
+    this._strategies.set(this.symbol, fn);
+  }
+  // Back-compat for tests that read/write _pendingBracket directly (primary symbol only)
+  get _pendingBracket() {
+    return this._pendingBrackets.get(this.symbol) ?? null;
+  }
+  set _pendingBracket(v) {
+    if (v == null) this._pendingBrackets.delete(this.symbol);
+    else this._pendingBrackets.set(this.symbol, v);
+  }
+  // Per-symbol accessors
+  lastPriceFor(sym = this.symbol) {
+    return this._lastPrice.get(sym) ?? null;
+  }
+  candleBufferFor(sym = this.symbol) {
+    return this._candleBuffers.get(sym) ?? [];
+  }
+  _resolveSymbol(symbol) {
+    if (symbol) return symbol;
+    if (this.symbols.length === 1) return this.symbol;
+    throw new Error("symbol is required for a multi-symbol session");
   }
   static liveAllowed() {
     return process.env.TRADELAB_ALLOW_LIVE === "true";
@@ -3552,7 +3635,7 @@ var TradingSession = class _TradingSession {
   }
   _wireBrokerEvents() {
     this.broker.on?.("order:filled", (order) => this._onBrokerFillSync(order));
-    this.broker.on?.("order:submitted", (order) => this._record("order:submitted", order));
+    this.broker.on?.("order:submitted", (order) => this._record("order:submitted", this._withMeta(order)));
     this.broker.on?.(
       "order:canceled",
       (order) => this._onBrokerTerminalOrderSync("order:canceled", order)
@@ -3565,30 +3648,48 @@ var TradingSession = class _TradingSession {
   }
   _onBrokerTerminalOrderSync(event, order) {
     this._record(event, order);
-    if (matchesOrderRef(this._pendingBracket, order)) {
-      this._pendingBracket = null;
+    for (const [sym, staged] of this._pendingBrackets) {
+      if (matchesOrderRef(staged, order)) {
+        this._pendingBrackets.delete(sym);
+        break;
+      }
     }
+  }
+  _withMeta(order) {
+    const key = order.clientOrderId;
+    if (key && this._entryMeta?.has(key)) {
+      const m = this._entryMeta.get(key);
+      return { ...order, sizing: m.sizing, ...m.rationale ? { rationale: m.rationale } : {} };
+    }
+    if (key && this._legMeta?.has(key)) {
+      return { ...order, ...this._legMeta.get(key) };
+    }
+    return order;
   }
   // Sync event handler — fire-and-forget async OCO work via a stored promise
   _onBrokerFillSync(order) {
-    this._record("order:filled", order);
-    if (matchesOrderRef(this._pendingBracket, order)) {
-      const staged = this._pendingBracket;
-      this._pendingBracket = null;
-      this._pendingCancelPromise = Promise.resolve(
-        this._attachBracket({ ...staged, receipt: order })
-      );
-      return;
+    this._record("order:filled", this._withMeta(order));
+    for (const [sym, staged] of this._pendingBrackets) {
+      if (matchesOrderRef(staged, order)) {
+        this._pendingBrackets.delete(sym);
+        const parentEntryId = staged.parentEntryId ?? order.clientOrderId;
+        this._pendingCancelPromise = Promise.resolve(
+          this._attachBracket({ ...staged, symbol: sym, receipt: order, parentEntryId })
+        );
+        return;
+      }
     }
-    const bracket = this.brackets.get(this.symbol);
-    if (bracket && (order.orderId === bracket.stopId || order.orderId === bracket.targetId)) {
-      const siblingId = order.orderId === bracket.stopId ? bracket.targetId : bracket.stopId;
-      this._pendingCancelPromise = (async () => {
-        if (siblingId) await this.broker.cancelOrder(siblingId).catch(() => {
-        });
-        this.brackets.delete(this.symbol);
-        this._record("position:closed", { reason: order.orderId === bracket.stopId ? "SL" : "TP" });
-      })();
+    for (const [sym, bracket] of this.brackets) {
+      if (bracket && (order.orderId === bracket.stopId || order.orderId === bracket.targetId)) {
+        const siblingId = order.orderId === bracket.stopId ? bracket.targetId : bracket.stopId;
+        this._pendingCancelPromise = (async () => {
+          if (siblingId) await this.broker.cancelOrder(siblingId).catch(() => {
+          });
+          this.brackets.delete(sym);
+          this._record("position:closed", { symbol: sym, reason: order.orderId === bracket.stopId ? "SL" : "TP" });
+        })();
+        return;
+      }
     }
   }
   async start() {
@@ -3607,18 +3708,21 @@ var TradingSession = class _TradingSession {
     this.running = false;
     this._record("shutdown", {});
   }
-  async pushBar(b) {
-    this.lastPrice = b.close;
+  async pushBar(b, symbol) {
+    const sym = this._resolveSymbol(symbol);
+    this._lastPrice.set(sym, b.close);
     if (typeof this.broker.simulateBar === "function") {
-      await this.broker.simulateBar(this.symbol, this.interval, b);
+      await this.broker.simulateBar(sym, this.interval, b);
     }
     if (this._pendingCancelPromise) {
       await this._pendingCancelPromise;
       this._pendingCancelPromise = null;
     }
-    this.candleBuffer.push(b);
-    if (this.candleBuffer.length > 200) this.candleBuffer.shift();
-    this._record("bar", { close: b.close, time: b.time });
+    const buf = this._candleBuffers.get(sym) ?? [];
+    buf.push(b);
+    if (buf.length > 200) buf.shift();
+    this._candleBuffers.set(sym, buf);
+    this._record("bar", { symbol: sym, close: b.close, time: b.time });
     await this._syncEquityAndRisk();
     await this.refresh();
   }
@@ -3626,14 +3730,15 @@ var TradingSession = class _TradingSession {
     const state = this.riskManager.getState?.() || {};
     return Boolean(state.halted);
   }
-  async placeOrder({ side, type = "market", qty, riskPct, stop, target, rr, limitPrice } = {}) {
+  async placeOrder({ side, type = "market", qty, riskPct, stop, target, rr, limitPrice, rationale, symbol } = {}) {
     if (!this.running) throw new Error("session not started");
     if (this._riskHalted()) throw new Error("session is risk-halted for the day");
-    const entryRef = type === "limit" ? limitPrice : this.lastPrice;
+    const sym = this._resolveSymbol(symbol);
+    const entryRef = type === "limit" ? limitPrice : this.lastPriceFor(sym);
     if (!Number.isFinite(entryRef)) throw new Error("no price available; pushBar() a price first");
+    const fraction = Number.isFinite(riskPct) ? riskPct / 100 : this.riskPct / 100;
     let size = qty;
     if (!Number.isFinite(size)) {
-      const fraction = Number.isFinite(riskPct) ? riskPct / 100 : this.riskPct / 100;
       if (!Number.isFinite(stop)) throw new Error("risk-based sizing requires a stop");
       size = calculatePositionSize({
         equity: this.equity,
@@ -3647,9 +3752,38 @@ var TradingSession = class _TradingSession {
     }
     size = roundStep(size, this.qtyStep);
     if (!(size >= this.minQty)) throw new Error(`sized below minQty (${size})`);
-    const entryClientOrderId = `${this.id}-entry-${Date.now()}`;
+    const targetPx = Number.isFinite(target) ? target : Number.isFinite(rr) && Number.isFinite(stop) ? side === "long" || side === "buy" ? entryRef + rr * Math.abs(entryRef - stop) : entryRef - rr * Math.abs(entryRef - stop) : null;
+    const sizing = {
+      entry: entryRef,
+      stop: Number.isFinite(stop) ? stop : null,
+      target: targetPx,
+      rr: Number.isFinite(rr) ? rr : null,
+      riskFraction: fraction,
+      riskAmount: this.equity * fraction,
+      qty: size,
+      notional: size * entryRef
+    };
+    const positions = this._cachedPositions ?? [];
+    const newNotional = sizing.notional * (side === "long" || side === "buy" ? 1 : -1);
+    let gross = Math.abs(sizing.notional);
+    let net = newNotional;
+    for (const p of positions) {
+      const px = p.avgEntry ?? p.avgPrice ?? p.entryPrice ?? entryRef;
+      const pv = Number.isFinite(p.marketValue) ? p.marketValue : (p.qty ?? 0) * px;
+      const signed = p.side === "long" || p.side === "buy" ? pv : -pv;
+      gross += Math.abs(pv);
+      net += signed;
+    }
+    const gate = this.riskManager.checkExposure({
+      grossExposure: gross,
+      netExposure: net,
+      equity: this.equity
+    });
+    if (!gate.ok) throw new Error(`risk rejected: ${gate.reason}`);
+    const entryClientOrderId = `${this.id}-entry-${Date.now()}-${++this._coidSeq}`;
+    this._entryMeta.set(entryClientOrderId, { sizing, rationale });
     const receipt = await this.broker.submitOrder({
-      symbol: this.symbol,
+      symbol: sym,
       side: toBrokerSide(side),
       type,
       qty: size,
@@ -3657,10 +3791,11 @@ var TradingSession = class _TradingSession {
       clientOrderId: entryClientOrderId
     });
     if (Number.isFinite(stop) || Number.isFinite(target) || Number.isFinite(rr)) {
+      const parentEntryId = receipt?.clientOrderId ?? entryClientOrderId;
       if (receipt.status === "filled") {
-        await this._attachBracket({ side, size, stop, target, rr, entryRef, receipt });
+        await this._attachBracket({ side, size, stop, target, rr, entryRef, receipt, parentEntryId, symbol: sym });
       } else if (receipt.status !== "rejected") {
-        this._pendingBracket = {
+        this._pendingBrackets.set(sym, {
           side,
           size,
           stop,
@@ -3668,44 +3803,50 @@ var TradingSession = class _TradingSession {
           rr,
           entryRef,
           orderId: receipt.orderId,
-          clientOrderId: receipt.clientOrderId || entryClientOrderId
-        };
+          clientOrderId: receipt.clientOrderId || entryClientOrderId,
+          parentEntryId
+        });
       } else {
-        this._pendingBracket = null;
+        this._pendingBrackets.delete(sym);
       }
     }
     await this.refresh();
     return receipt;
   }
-  async _attachBracket({ side, size, stop, target, rr, entryRef, receipt }) {
+  async _attachBracket({ side, size, stop, target, rr, entryRef, receipt, parentEntryId, symbol }) {
+    const sym = symbol ?? this.symbol;
     const entryFill = receipt?.avgFillPrice ?? entryRef;
     const risk = Number.isFinite(stop) ? Math.abs(entryFill - stop) : null;
     const targetPrice = Number.isFinite(target) ? target : Number.isFinite(rr) && risk ? side === "long" || side === "buy" ? entryFill + rr * risk : entryFill - rr * risk : null;
     const exitSide = oppositeSide2(side);
     const bracket = {};
     if (Number.isFinite(stop)) {
+      const stopCoid = `${this.id}-stop-${Date.now()}-${++this._coidSeq}`;
+      if (parentEntryId) this._legMeta.set(stopCoid, { parentEntryId, leg: "stop" });
       const stopOrder = await this.broker.submitOrder({
-        symbol: this.symbol,
+        symbol: sym,
         side: exitSide,
         type: "stop",
         qty: size,
         stopPrice: stop,
-        clientOrderId: `${this.id}-stop-${Date.now()}`
+        clientOrderId: stopCoid
       });
       bracket.stopId = stopOrder.orderId;
     }
     if (Number.isFinite(targetPrice)) {
+      const tgtCoid = `${this.id}-target-${Date.now()}-${++this._coidSeq}`;
+      if (parentEntryId) this._legMeta.set(tgtCoid, { parentEntryId, leg: "target" });
       const tgtOrder = await this.broker.submitOrder({
-        symbol: this.symbol,
+        symbol: sym,
         side: exitSide,
         type: "limit",
         qty: size,
         limitPrice: targetPrice,
-        clientOrderId: `${this.id}-target-${Date.now()}`
+        clientOrderId: tgtCoid
       });
       bracket.targetId = tgtOrder.orderId;
     }
-    this.brackets.set(this.symbol, bracket);
+    this.brackets.set(sym, bracket);
   }
   async _syncEquityAndRisk() {
     const acct = await this.broker.getAccount?.().catch(() => null);
@@ -3718,6 +3859,11 @@ var TradingSession = class _TradingSession {
     } else {
       this.riskManager.update({ timeMs: Date.now(), equity: this.equity });
     }
+    const nowHalted = Boolean(this.riskManager.getState?.().halted);
+    if (nowHalted && !this._wasHalted) {
+      this._record("risk:halt", { reason: this.riskManager.haltReason ?? this.riskManager.getState?.().haltReason ?? "risk halt" });
+    }
+    this._wasHalted = nowHalted;
   }
   async closePosition(symbol = this.symbol) {
     const positions = await this.broker.getPositions();
@@ -3768,6 +3914,7 @@ var TradingSession = class _TradingSession {
     return {
       id: this.id,
       symbol: this.symbol,
+      symbols: this.symbols,
       interval: this.interval,
       mode: this.mode,
       running: this.running,
@@ -3853,6 +4000,49 @@ var SessionManager = class {
 function createSessionManager(opts) {
   return new SessionManager(opts);
 }
+
+// src/live/notify.js
+var DEFAULT_EVENTS = ["order:filled", "risk:halt"];
+function attachNotifier(session, { onEvent, webhookUrl, events = DEFAULT_EVENTS, drawdownPct = 0 } = {}) {
+  const wanted = new Set(events);
+  let peak = null;
+  const deliver = async (event, payload) => {
+    if (typeof onEvent === "function") {
+      try {
+        await onEvent({ event, payload });
+      } catch {
+      }
+    }
+    if (webhookUrl && typeof fetch === "function") {
+      try {
+        await fetch(webhookUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ event, payload })
+        });
+      } catch {
+      }
+    }
+  };
+  const handler = ({ event, payload }) => {
+    if (wanted.has(event)) {
+      deliver(event, payload).catch(() => {
+      });
+      return;
+    }
+    if (drawdownPct > 0 && event === "equity:update") {
+      const eq = payload?.equity;
+      if (Number.isFinite(eq)) {
+        if (peak === null || eq > peak) peak = eq;
+        if (peak > 0 && (peak - eq) / peak * 100 >= drawdownPct) {
+          deliver("drawdown:breach", { equity: eq, peak, drawdownPct: (peak - eq) / peak * 100 }).catch(() => {
+          });
+        }
+      }
+    }
+  };
+  return session.eventBus.onAny(handler);
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   AlpacaBroker,
@@ -3877,6 +4067,7 @@ function createSessionManager(opts) {
   StateManager,
   StorageProvider,
   TradingSession,
+  attachNotifier,
   createAlpacaBroker,
   createBinanceBroker,
   createBrokerFeed,

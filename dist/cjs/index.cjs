@@ -45,6 +45,7 @@ __export(index_exports, {
   calculatePositionSize: () => calculatePositionSize,
   candleStats: () => candleStats,
   clampFinite: () => clampFinite,
+  createResearchStore: () => createResearchStore,
   detectFVG: () => detectFVG,
   ema: () => ema,
   exportBacktestArtifacts: () => exportBacktestArtifacts,
@@ -75,6 +76,7 @@ __export(index_exports, {
   research: () => research_exports,
   saveCandlesToCache: () => saveCandlesToCache,
   structureState: () => structureState,
+  summarize: () => summarize,
   swingHigh: () => swingHigh,
   swingLow: () => swingLow,
   walkForwardOptimize: () => walkForwardOptimize
@@ -4519,6 +4521,66 @@ async function backtestHistorical({ backtestOptions = {}, data, ...legacy } = {}
   });
 }
 
+// src/research/store.js
+var import_promises = require("node:fs/promises");
+var import_node_path2 = require("node:path");
+var DEFAULT_DIR = ".tradelab/research";
+function fileFor(dir, id) {
+  if (!/^[\w.-]+$/.test(String(id))) throw new Error(`invalid research id: ${id}`);
+  return (0, import_node_path2.join)(dir, `${id}.json`);
+}
+async function load(dir, id) {
+  try {
+    const raw = await (0, import_promises.readFile)(fileFor(dir, id), "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+async function save(dir, record) {
+  await (0, import_promises.mkdir)(dir, { recursive: true });
+  await (0, import_promises.writeFile)(fileFor(dir, record.id), JSON.stringify(record, null, 2));
+  return record;
+}
+function bestSharpe(entries) {
+  let best = null;
+  for (const e of entries) {
+    const s = e.metrics?.sharpe;
+    if (Number.isFinite(s) && (best === null || s > best.sharpe)) best = { sharpe: s, params: e.params };
+  }
+  return best;
+}
+function createResearchStore({ dir = DEFAULT_DIR } = {}) {
+  return {
+    async open(id, goal = "") {
+      const existing = await load(dir, id);
+      if (existing) return existing;
+      const record = { id, goal, createdAt: (/* @__PURE__ */ new Date()).toISOString(), closedAt: null, entries: [] };
+      return save(dir, record);
+    },
+    async log(id, { hypothesis = "", params = {}, metrics = {}, verdict = null } = {}) {
+      const record = await load(dir, id) || { id, goal: "", createdAt: (/* @__PURE__ */ new Date()).toISOString(), closedAt: null, entries: [] };
+      const entry = { at: (/* @__PURE__ */ new Date()).toISOString(), hypothesis, params, metrics, verdict };
+      record.entries.push(entry);
+      await save(dir, record);
+      return entry;
+    },
+    async recall(id, limit = 10) {
+      const record = await load(dir, id) || { goal: "", entries: [] };
+      const entries = record.entries.slice(-limit);
+      const best = bestSharpe(record.entries);
+      const flagged = record.entries.filter((e) => e.verdict?.overfit).length;
+      const summary = record.entries.length ? `Best Sharpe so far: ${best ? best.sharpe.toFixed(2) : "n/a"}${best ? ` via ${JSON.stringify(best.params)}` : ""}. ${flagged} of ${record.entries.length} flagged overfit.` : "No entries logged yet.";
+      return { goal: record.goal, entries, summary };
+    },
+    async close(id) {
+      const record = await load(dir, id) || { id, goal: "", createdAt: (/* @__PURE__ */ new Date()).toISOString(), entries: [] };
+      record.closedAt = (/* @__PURE__ */ new Date()).toISOString();
+      return save(dir, record);
+    }
+  };
+}
+
 // src/reporting/renderHtmlReport.js
 var import_fs2 = __toESM(require("fs"), 1);
 var import_path3 = __toESM(require("path"), 1);
@@ -4928,6 +4990,32 @@ function exportBacktestArtifacts({
   }
   return outputs;
 }
+
+// src/reporting/summarize.js
+function pct2(value, digits = 1) {
+  return Number.isFinite(value) ? `${value.toFixed(digits)}%` : "n/a";
+}
+function summarize(metrics = {}, { verdict } = {}) {
+  const trades = Number.isFinite(metrics.trades) ? metrics.trades : 0;
+  const win = Number.isFinite(metrics.winRate) ? Math.round(metrics.winRate * 100) : null;
+  const dd = Number.isFinite(metrics.maxDrawdownPct) ? metrics.maxDrawdownPct : Number.isFinite(metrics.maxDrawdown) ? metrics.maxDrawdown * 100 : null;
+  const ret = Number.isFinite(metrics.totalReturnPct) ? metrics.totalReturnPct : null;
+  const sharpe = Number.isFinite(metrics.sharpe) ? metrics.sharpe : null;
+  if (trades === 0) return "Ran with 0 trades, so there is nothing to evaluate yet.";
+  const parts = [`Made ${trades} trades`];
+  if (win !== null) parts.push(`won ${win}% of them`);
+  if (ret !== null) parts.push(`for a ${pct2(ret)} total return`);
+  if (dd !== null) parts.push(`with a worst drawdown of ${pct2(dd)}`);
+  let text = parts.join(", ");
+  if (sharpe !== null) {
+    text += ` (Sharpe ${sharpe.toFixed(2)})`;
+  }
+  text += ".";
+  if (verdict && verdict.overfit) {
+    text += ` Caution: robustness checks flag this result as likely overfit${verdict.note ? ` (${verdict.note})` : ""}.`;
+  }
+  return text;
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   BIG_NUMBER,
@@ -4945,6 +5033,7 @@ function exportBacktestArtifacts({
   calculatePositionSize,
   candleStats,
   clampFinite,
+  createResearchStore,
   detectFVG,
   ema,
   exportBacktestArtifacts,
@@ -4975,6 +5064,7 @@ function exportBacktestArtifacts({
   research,
   saveCandlesToCache,
   structureState,
+  summarize,
   swingHigh,
   swingLow,
   walkForwardOptimize
