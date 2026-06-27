@@ -10,7 +10,14 @@ function bar(time, price, { high = price, low = price } = {}) {
 
 async function freshSession(opts = {}) {
   const broker = new PaperEngine({ equity: 10_000 });
-  const session = new TradingSession({ id: "t1", symbol: "AAPL", interval: "1m", broker, equity: 10_000, ...opts });
+  const session = new TradingSession({
+    id: "t1",
+    symbol: "AAPL",
+    interval: "1m",
+    broker,
+    equity: 10_000,
+    ...opts,
+  });
   await session.start();
   return { broker, session };
 }
@@ -94,7 +101,14 @@ test("bracket attaches for a resting limit entry once it fills", async () => {
   const { session } = await freshSession();
   await session.pushBar(bar(1, 100));
   // Resting limit long below the market; no bracket yet (entry not filled).
-  await session.placeOrder({ side: "long", type: "limit", qty: 10, limitPrice: 99, stop: 97, target: 105 });
+  await session.placeOrder({
+    side: "long",
+    type: "limit",
+    qty: 10,
+    limitPrice: 99,
+    stop: 97,
+    target: 105,
+  });
   assert.equal(session.brackets.size, 0);
   assert.equal(session.getStatus().positions.length, 0);
   // Push a bar that dips to fill the limit.
@@ -120,7 +134,9 @@ test("SessionManager creates and tracks paper sessions", async () => {
 
 test("SessionManager refuses live without gating", async () => {
   const mgr = new SessionManager();
-  await assert.rejects(() => mgr.create({ id: "x", symbol: "AAPL", mode: "live", confirmLive: true }));
+  await assert.rejects(() =>
+    mgr.create({ id: "x", symbol: "AAPL", mode: "live", confirmLive: true })
+  );
 });
 
 test("haltAll flattens and stops every session", async () => {

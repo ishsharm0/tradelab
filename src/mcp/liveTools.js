@@ -48,7 +48,8 @@ export const liveTools = {
   },
 
   session_status: {
-    description: "Get a full refreshed status snapshot for a session (positions, orders, equity, risk).",
+    description:
+      "Get a full refreshed status snapshot for a session (positions, orders, equity, risk).",
     handler: async ({ sessionId } = {}) => {
       const session = requireSession(sessionId);
       return session.refresh();
@@ -84,8 +85,19 @@ export const liveTools = {
   },
 
   place_order: {
-    description: "Place a market or limit order in a session (optionally risk-sized with bracket stop/target).",
-    handler: async ({ sessionId, side, type = "market", qty, riskPct, stop, target, rr, limitPrice } = {}) => {
+    description:
+      "Place a market or limit order in a session (optionally risk-sized with bracket stop/target).",
+    handler: async ({
+      sessionId,
+      side,
+      type = "market",
+      qty,
+      riskPct,
+      stop,
+      target,
+      rr,
+      limitPrice,
+    } = {}) => {
       const session = requireSession(sessionId);
       return session.placeOrder({ side, type, qty, riskPct, stop, target, rr, limitPrice });
     },

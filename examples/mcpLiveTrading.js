@@ -41,7 +41,14 @@ async function main() {
     stop: 98,
     target: 104,
   });
-  console.log("Entry filled:", receipt.status, "qty:", receipt.filledQty, "@", receipt.avgFillPrice);
+  console.log(
+    "Entry filled:",
+    receipt.status,
+    "qty:",
+    receipt.filledQty,
+    "@",
+    receipt.avgFillPrice
+  );
 
   let status = session.getStatus();
   console.log("Open positions:", status.positions.length);

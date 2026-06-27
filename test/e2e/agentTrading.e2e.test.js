@@ -104,8 +104,8 @@ test("liveTools: create_session + feed_price + bracket place_order", async () =>
     sessionId,
     side: "long",
     type: "market",
-    riskPct: 1,     // 1% of 10k = $100 risk
-    stop: 49_500,   // $500 stop → qty ≈ 0.2
+    riskPct: 1, // 1% of 10k = $100 risk
+    stop: 49_500, // $500 stop → qty ≈ 0.2
     target: 51_500, // $1500 target → nice 3R
   });
 
@@ -170,16 +170,24 @@ test("dashboard /events delivers SSE frame after feed_price", async () => {
     // Set up SSE listener, then push another bar to fire events
     const framePromise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("SSE timeout")), 4000);
-      http.get(`${url}/events`, (res) => {
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          if (chunk.trim()) {
+      http
+        .get(`${url}/events`, (res) => {
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            if (chunk.trim()) {
+              clearTimeout(timer);
+              resolve(chunk);
+            }
+          });
+          res.on("error", (e) => {
             clearTimeout(timer);
-            resolve(chunk);
-          }
+            reject(e);
+          });
+        })
+        .on("error", (e) => {
+          clearTimeout(timer);
+          reject(e);
         });
-        res.on("error", (e) => { clearTimeout(timer); reject(e); });
-      }).on("error", (e) => { clearTimeout(timer); reject(e); });
     });
 
     // Give the SSE connection a moment to establish, then push a bar
@@ -239,7 +247,7 @@ test("OCO bracket: price hits target → position closed, equity > 10k (winner)"
   await session.placeOrder({
     side: "long",
     type: "market",
-    qty: 0.1,          // 0.1 BTC, no risk sizing
+    qty: 0.1, // 0.1 BTC, no risk sizing
     stop: 49_000,
     target: 51_000,
   });
@@ -293,16 +301,24 @@ test("full e2e: liveTools + dashboardServer integrated loop", async () => {
     // 4. SSE: connect to /events, push another bar, assert frame arrives
     const ssePromise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("SSE timeout in full e2e")), 4000);
-      http.get(`${url}/events`, (res) => {
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          if (chunk.trim()) {
+      http
+        .get(`${url}/events`, (res) => {
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            if (chunk.trim()) {
+              clearTimeout(timer);
+              resolve(chunk);
+            }
+          });
+          res.on("error", (e) => {
             clearTimeout(timer);
-            resolve(chunk);
-          }
+            reject(e);
+          });
+        })
+        .on("error", (e) => {
+          clearTimeout(timer);
+          reject(e);
         });
-        res.on("error", (e) => { clearTimeout(timer); reject(e); });
-      }).on("error", (e) => { clearTimeout(timer); reject(e); });
     });
 
     await new Promise((r) => setTimeout(r, 40));

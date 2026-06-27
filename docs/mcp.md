@@ -88,16 +88,16 @@ Local checkout example:
 
 ### Research tools
 
-| Tool                  | Use it to                                                             |
-| --------------------- | --------------------------------------------------------------------- |
-| `list_strategies`     | See built-in strategy names and tunable parameters                    |
-| `fetch_candles`       | Load Yahoo or CSV candles and return first/last bars                  |
-| `run_backtest`        | Run one named strategy and return compact metrics                     |
-| `walk_forward`        | Run a parameter grid through walk-forward validation                  |
-| `analyze_robustness`  | Backtest + Monte Carlo + Deflated Sharpe — validate before you trade  |
-| `optimize_strategy`   | In-process grid sweep; returns a leaderboard sorted by chosen metric  |
-| `compare_strategies`  | Run several named strategies on the same dataset, ranked head-to-head |
-| `candle_stats`        | Sanity-check candle data: count, date range, price range, interval    |
+| Tool                 | Use it to                                                             |
+| -------------------- | --------------------------------------------------------------------- |
+| `list_strategies`    | See built-in strategy names and tunable parameters                    |
+| `fetch_candles`      | Load Yahoo or CSV candles and return first/last bars                  |
+| `run_backtest`       | Run one named strategy and return compact metrics                     |
+| `walk_forward`       | Run a parameter grid through walk-forward validation                  |
+| `analyze_robustness` | Backtest + Monte Carlo + Deflated Sharpe — validate before you trade  |
+| `optimize_strategy`  | In-process grid sweep; returns a leaderboard sorted by chosen metric  |
+| `compare_strategies` | Run several named strategies on the same dataset, ranked head-to-head |
+| `candle_stats`       | Sanity-check candle data: count, date range, price range, interval    |
 
 Tool responses are intentionally compact. They are meant for planning and comparison, not for replacing full HTML/CSV/JSON reports from the CLI.
 

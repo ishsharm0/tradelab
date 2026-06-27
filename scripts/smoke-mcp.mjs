@@ -41,10 +41,7 @@ async function main() {
     args: [MCP_BIN],
   });
 
-  const client = new Client(
-    { name: "smoke-mcp-client", version: "1.0.0" },
-    { capabilities: {} }
-  );
+  const client = new Client({ name: "smoke-mcp-client", version: "1.0.0" }, { capabilities: {} });
 
   await client.connect(transport);
   console.log("✓ MCP stdio connection established");
