@@ -22,6 +22,7 @@ class MockBroker extends BrokerAdapter {
     this._openOrders = new Map(); // orderId → order record
     this._orderId = 0;
     this._lastPrice = 100;
+    this._rejectNextMarket = false;
   }
 
   // ── connection ─────────────────────────────────────────────────────────────
@@ -62,6 +63,19 @@ class MockBroker extends BrokerAdapter {
     this.emit("order:submitted", { ...record });
 
     if (order.type === "market") {
+      if (this._rejectNextMarket) {
+        this._rejectNextMarket = false;
+        setTimeout(
+          () =>
+            this.emit("order:rejected", {
+              ...record,
+              status: "rejected",
+              rejectReason: "rejected by test broker",
+            }),
+          0
+        );
+        return { orderId, clientOrderId: order.clientOrderId, status: "accepted" };
+      }
       // Async fill — fires on next tick so the session can stage a bracket first.
       setTimeout(() => this._fill(record, this._lastPrice), 0);
       return { orderId, clientOrderId: order.clientOrderId, status: "accepted" };
@@ -259,6 +273,55 @@ test("async market entry → position tracked + bracket attached after flush", a
     assert.equal(status.positions[0].side, "long");
     assert.equal(status.positions[0].qty, 10);
     assert.equal(status.openOrders.length, 2, "bracket (stop + target) must be attached");
+  } finally {
+    if (saved === undefined) delete process.env.TRADELAB_ALLOW_LIVE;
+    else process.env.TRADELAB_ALLOW_LIVE = saved;
+  }
+});
+
+test("rejected async entry clears its staged bracket before later entries", async () => {
+  const saved = process.env.TRADELAB_ALLOW_LIVE;
+  try {
+    process.env.TRADELAB_ALLOW_LIVE = "true";
+    const broker = new MockBroker({ equity: 10_000 });
+    const mgr = new SessionManager();
+    const session = await mgr.create({
+      id: "reject-entry-1",
+      mode: "live",
+      confirmLive: true,
+      symbol: "AAPL",
+      broker,
+      equity: 10_000,
+      qtyStep: 1,
+      minQty: 1,
+    });
+
+    broker._lastPrice = 100;
+    session.lastPrice = 100;
+    broker._rejectNextMarket = true;
+
+    await session.placeOrder({
+      side: "long",
+      type: "market",
+      qty: 10,
+      stop: 98,
+      target: 104,
+    });
+    await flushAsync();
+    await session.refresh();
+
+    assert.equal(session.getStatus().positions.length, 0);
+    assert.equal(session.getStatus().openOrders.length, 0);
+    assert.equal(session._pendingBracket, null);
+
+    await session.placeOrder({ side: "long", type: "market", qty: 5 });
+    await flushAsync();
+    await session.refresh();
+
+    const status = session.getStatus();
+    assert.equal(status.positions.length, 1);
+    assert.equal(status.positions[0].qty, 5);
+    assert.equal(status.openOrders.length, 0, "old rejected bracket must not attach later");
   } finally {
     if (saved === undefined) delete process.env.TRADELAB_ALLOW_LIVE;
     else process.env.TRADELAB_ALLOW_LIVE = saved;

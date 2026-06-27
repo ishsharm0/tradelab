@@ -156,6 +156,37 @@ test("backtestPortfolio aggregates multiple systems into one result", () => {
   assert.ok(result.eqSeries.length > 0);
 });
 
+test("backtestPortfolio reports final equity when equity series is disabled", () => {
+  const candles = buildCandles(8);
+
+  const result = backtestPortfolio({
+    equity: 10_000,
+    collectEqSeries: false,
+    collectReplay: false,
+    systems: [
+      {
+        symbol: "AAA",
+        candles,
+        signal({ index, bar }) {
+          if (index !== 1) return null;
+          return {
+            side: "buy",
+            entry: bar.close,
+            stop: bar.close - 1,
+            rr: 2,
+          };
+        },
+        warmupBars: 1,
+        flattenAtClose: false,
+      },
+    ],
+  });
+
+  assert.equal(result.eqSeries.length, 0);
+  assert.equal(result.positions.length, 1);
+  assert.ok(result.metrics.finalEquity > 10_000);
+});
+
 test("backtestPortfolio threads interval into aggregate metrics", () => {
   const candles = buildCandles(8);
   const result = backtestPortfolio({

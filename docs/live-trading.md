@@ -49,7 +49,7 @@ console.log(engine.getStatus());
 await engine.stop();
 ```
 
-`PaperEngine` implements the broker interface in memory. Use it first for CLI runs, dashboard checks, and strategy wiring.
+`PaperEngine` implements the broker interface in memory. Use it first for CLI runs, dashboard checks, and strategy wiring. Market orders need a price reference, so call `pushBar()`, `simulateBar()`, or the MCP `feed_price` tool before submitting one.
 
 ## Signal Contract
 

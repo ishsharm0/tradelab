@@ -309,10 +309,11 @@ export function backtestPortfolio({
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
   const metricsInterval = interval ?? systems[0]?.interval;
+  const finalState = portfolioState(runners, equity);
   const metrics = buildMetrics({
     closed: trades,
     equityStart: equity,
-    equityFinal: eqSeries.length ? eqSeries[eqSeries.length - 1].equity : equity,
+    equityFinal: eqSeries.length ? eqSeries[eqSeries.length - 1].equity : finalState.markedEquity,
     candles: orderedCandles,
     estBarMs: estimateBarMs(orderedCandles),
     eqSeries,

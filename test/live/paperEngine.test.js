@@ -27,6 +27,22 @@ test("PaperEngine fills market orders immediately and tracks positions", async (
   assert.equal(positions[0].side, "long");
 });
 
+test("PaperEngine rejects market orders when no price reference is available", async () => {
+  const broker = new PaperEngine({ equity: 10_000 });
+  await broker.connect();
+
+  const receipt = await broker.submitOrder({
+    symbol: "AAPL",
+    side: "buy",
+    type: "market",
+    qty: 1,
+  });
+
+  assert.equal(receipt.status, "rejected");
+  assert.match(receipt.rejectReason, /no price/i);
+  assert.equal((await broker.getPositions()).length, 0);
+});
+
 test("PaperEngine fills limit orders when touched by bar", async () => {
   const broker = new PaperEngine({ equity: 10_000 });
   await broker.connect();

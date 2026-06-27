@@ -341,7 +341,8 @@ export interface DashboardServer {
 export function createDashboardServer(options: {
   source: {
     eventBus: EventBus;
-    getStatus?: () => Record<string, unknown>;
+    getStatus?: () => unknown;
+    refresh?: () => Promise<unknown>;
   };
   port?: number;
   maxBuffer?: number;
@@ -414,6 +415,7 @@ export interface TradingSessionOptions {
   minQty?: number;
   maxLeverage?: number;
   eventBus?: EventBus;
+  confirmLive?: boolean;
 }
 
 export interface SessionPlaceOrderOptions {

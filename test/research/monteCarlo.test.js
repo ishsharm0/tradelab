@@ -30,3 +30,8 @@ test("monteCarlo with block bootstrap preserves autocorrelation length option", 
 test("monteCarlo throws on empty pnls", () => {
   assert.throws(() => monteCarlo({ tradePnls: [], equityStart: 1000 }));
 });
+
+test("monteCarlo throws when iterations is not positive", () => {
+  assert.throws(() => monteCarlo({ tradePnls: [1, -1], iterations: 0 }), /positive iterations/);
+  assert.throws(() => monteCarlo({ tradePnls: [1, -1], iterations: -5 }), /positive iterations/);
+});

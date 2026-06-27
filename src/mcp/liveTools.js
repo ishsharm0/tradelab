@@ -10,6 +10,33 @@ function requireSession(sessionId) {
   return s;
 }
 
+function strategyContext(session) {
+  const candles = session.candleBuffer;
+  const bar = candles[candles.length - 1] ?? null;
+  const status = session.getStatus();
+  return {
+    candles,
+    index: candles.length - 1,
+    bar,
+    equity: status.equity,
+    openPosition: status.positions[0] ?? null,
+    pendingOrder: null,
+  };
+}
+
+function signalToOrder(signal) {
+  return {
+    side: signal.side ?? signal.direction ?? signal.action,
+    type: signal.type ?? "market",
+    qty: signal.qty ?? signal.size,
+    riskPct: signal.riskPct,
+    stop: signal.stop ?? signal.stopLoss ?? signal.sl,
+    target: signal.target ?? signal.takeProfit ?? signal.tp,
+    rr: signal.rr ?? signal._rr,
+    limitPrice: signal.limitPrice ?? signal.limit ?? signal.entry ?? signal.price,
+  };
+}
+
 export { manager as sessionManager };
 
 export const liveTools = {
@@ -71,9 +98,9 @@ export const liveTools = {
       // If a strategy is attached and session is flat, evaluate it
       if (session._strategy && session.getStatus().positions.length === 0) {
         try {
-          const signal = session._strategy(session.candleBuffer, session.getStatus());
-          if (signal && signal.side && signal.type) {
-            await session.placeOrder(signal).catch(() => {});
+          const signal = session._strategy(strategyContext(session));
+          if (signal && (signal.side || signal.direction || signal.action)) {
+            await session.placeOrder(signalToOrder(signal)).catch(() => {});
           }
         } catch {
           // strategy errors are non-fatal
@@ -160,11 +187,7 @@ export const liveTools = {
       const session = requireSession(sessionId);
       const factory = getStrategy(strategy);
       const signal = factory(params);
-      // Wrap: accept (candleBuffer, status) and call signal with the buffer
-      session._strategy = (candleBuffer) => {
-        if (!candleBuffer || candleBuffer.length === 0) return null;
-        return signal(candleBuffer[candleBuffer.length - 1], candleBuffer);
-      };
+      session._strategy = signal;
       return { ok: true, strategy, params };
     },
   },

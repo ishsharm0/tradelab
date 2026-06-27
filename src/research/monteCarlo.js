@@ -35,6 +35,10 @@ export function monteCarlo({
   if (!Array.isArray(tradePnls) || tradePnls.length === 0) {
     throw new Error("monteCarlo() requires a non-empty tradePnls array");
   }
+  const runCount = Math.floor(Number(iterations));
+  if (!Number.isFinite(runCount) || runCount < 1) {
+    throw new Error("monteCarlo() requires positive iterations");
+  }
   const rng = makeRng(seed);
   const n = tradePnls.length;
   const block = Math.max(1, Math.floor(blockSize));
@@ -43,7 +47,7 @@ export function monteCarlo({
   const drawdowns = [];
   const pathSamples = Array.from({ length: n + 1 }, () => []);
 
-  for (let it = 0; it < iterations; it += 1) {
+  for (let it = 0; it < runCount; it += 1) {
     const path = [equityStart];
     let equity = equityStart;
     let filled = 0;
@@ -78,7 +82,7 @@ export function monteCarlo({
   });
 
   return {
-    iterations,
+    iterations: runCount,
     blockSize: block,
     finalEquity: bands(sortedFinals),
     maxDrawdown: bands(sortedDd),

@@ -12,6 +12,19 @@ function toBrokerSide(side) {
   return side === "long" || side === "buy" ? "buy" : "sell";
 }
 
+function matchesOrderRef(reference, order) {
+  if (!reference || !order) return false;
+  if (reference.orderId && order.orderId && reference.orderId === order.orderId) return true;
+  if (
+    reference.clientOrderId &&
+    order.clientOrderId &&
+    reference.clientOrderId === order.clientOrderId
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export class TradingSession {
   constructor({
     id,
@@ -79,8 +92,20 @@ export class TradingSession {
     // Forward broker fills/cancels onto the session bus, and run OCO bracket logic.
     this.broker.on?.("order:filled", (order) => this._onBrokerFillSync(order));
     this.broker.on?.("order:submitted", (order) => this._record("order:submitted", order));
-    this.broker.on?.("order:canceled", (order) => this._record("order:canceled", order));
+    this.broker.on?.("order:canceled", (order) =>
+      this._onBrokerTerminalOrderSync("order:canceled", order)
+    );
+    this.broker.on?.("order:rejected", (order) =>
+      this._onBrokerTerminalOrderSync("order:rejected", order)
+    );
     this.broker.on?.("equity:update", (acct) => this._record("equity:update", acct));
+  }
+
+  _onBrokerTerminalOrderSync(event, order) {
+    this._record(event, order);
+    if (matchesOrderRef(this._pendingBracket, order)) {
+      this._pendingBracket = null;
+    }
   }
 
   // Sync event handler — fire-and-forget async OCO work via a stored promise
@@ -88,7 +113,7 @@ export class TradingSession {
     this._record("order:filled", order);
 
     // Resting entry order (e.g. a limit) just filled — attach its staged bracket.
-    if (this._pendingBracket && String(order.clientOrderId || "").includes("-entry-")) {
+    if (matchesOrderRef(this._pendingBracket, order)) {
       const staged = this._pendingBracket;
       this._pendingBracket = null;
       // simulateBar may still be iterating orders, so schedule attach without awaiting.
@@ -175,21 +200,33 @@ export class TradingSession {
     size = roundStep(size, this.qtyStep);
     if (!(size >= this.minQty)) throw new Error(`sized below minQty (${size})`);
 
+    const entryClientOrderId = `${this.id}-entry-${Date.now()}`;
     const receipt = await this.broker.submitOrder({
       symbol: this.symbol,
       side: toBrokerSide(side),
       type,
       qty: size,
       limitPrice: type === "limit" ? limitPrice : undefined,
-      clientOrderId: `${this.id}-entry-${Date.now()}`,
+      clientOrderId: entryClientOrderId,
     });
 
     // Stage bracket if needed — market orders fill synchronously in PaperEngine
     if (Number.isFinite(stop) || Number.isFinite(target) || Number.isFinite(rr)) {
       if (receipt.status === "filled") {
         await this._attachBracket({ side, size, stop, target, rr, entryRef, receipt });
+      } else if (receipt.status !== "rejected") {
+        this._pendingBracket = {
+          side,
+          size,
+          stop,
+          target,
+          rr,
+          entryRef,
+          orderId: receipt.orderId,
+          clientOrderId: receipt.clientOrderId || entryClientOrderId,
+        };
       } else {
-        this._pendingBracket = { side, size, stop, target, rr, entryRef };
+        this._pendingBracket = null;
       }
     }
 

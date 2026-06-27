@@ -216,15 +216,21 @@ export class PaperEngine extends BrokerAdapter {
     this.orderHistory.set(order.orderId, { ...order });
   }
 
+  _rejectOrder(order, reason) {
+    order.status = "rejected";
+    order.rejectReason = reason;
+    this._recordOrder(order);
+    this.openOrders.delete(order.orderId);
+    const receipt = cloneOrder(order);
+    this.emit("order:rejected", receipt);
+    return receipt;
+  }
+
   _fillOrder(order, fillPrice, kind = "market", fillTime = Date.now()) {
     const side = normalizeOrderSide(order.side);
     const qty = Math.max(0, asNumber(order.qty, 0));
     if (!(qty > 0)) {
-      order.status = "rejected";
-      order.rejectReason = "invalid quantity";
-      this._recordOrder(order);
-      this.emit("order:rejected", cloneOrder(order));
-      return cloneOrder(order);
+      return this._rejectOrder(order, "invalid quantity");
     }
 
     const sideForFill = side === "buy" ? "long" : "short";
@@ -346,11 +352,7 @@ export class PaperEngine extends BrokerAdapter {
     };
 
     if (!(normalized.qty > 0)) {
-      normalized.status = "rejected";
-      normalized.rejectReason = "invalid quantity";
-      this._recordOrder(normalized);
-      this.emit("order:rejected", cloneOrder(normalized));
-      return cloneOrder(normalized);
+      return this._rejectOrder(normalized, "invalid quantity");
     }
 
     this._recordOrder(normalized);
@@ -358,7 +360,10 @@ export class PaperEngine extends BrokerAdapter {
 
     if (normalized.type === "market") {
       const mark = this.lastPrices.get(normalized.symbol);
-      const fillPrice = mark ?? normalized.limitPrice ?? normalized.stopPrice ?? 0;
+      const fillPrice = mark ?? normalized.limitPrice ?? normalized.stopPrice;
+      if (!Number.isFinite(fillPrice)) {
+        return this._rejectOrder(normalized, "no price available for market order");
+      }
       return this._fillOrder(normalized, fillPrice, "market");
     }
 

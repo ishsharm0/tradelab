@@ -2301,15 +2301,20 @@ var PaperEngine = class extends BrokerAdapter {
   _recordOrder(order) {
     this.orderHistory.set(order.orderId, { ...order });
   }
+  _rejectOrder(order, reason) {
+    order.status = "rejected";
+    order.rejectReason = reason;
+    this._recordOrder(order);
+    this.openOrders.delete(order.orderId);
+    const receipt = cloneOrder(order);
+    this.emit("order:rejected", receipt);
+    return receipt;
+  }
   _fillOrder(order, fillPrice, kind = "market", fillTime = Date.now()) {
     const side = normalizeOrderSide(order.side);
     const qty = Math.max(0, asNumber(order.qty, 0));
     if (!(qty > 0)) {
-      order.status = "rejected";
-      order.rejectReason = "invalid quantity";
-      this._recordOrder(order);
-      this.emit("order:rejected", cloneOrder(order));
-      return cloneOrder(order);
+      return this._rejectOrder(order, "invalid quantity");
     }
     const sideForFill = side === "buy" ? "long" : "short";
     const filled = applyFill(fillPrice, sideForFill, {
@@ -2417,17 +2422,16 @@ var PaperEngine = class extends BrokerAdapter {
       rejectReason: void 0
     };
     if (!(normalized.qty > 0)) {
-      normalized.status = "rejected";
-      normalized.rejectReason = "invalid quantity";
-      this._recordOrder(normalized);
-      this.emit("order:rejected", cloneOrder(normalized));
-      return cloneOrder(normalized);
+      return this._rejectOrder(normalized, "invalid quantity");
     }
     this._recordOrder(normalized);
     this.emit("order:submitted", cloneOrder(normalized));
     if (normalized.type === "market") {
       const mark = this.lastPrices.get(normalized.symbol);
-      const fillPrice = mark ?? normalized.limitPrice ?? normalized.stopPrice ?? 0;
+      const fillPrice = mark ?? normalized.limitPrice ?? normalized.stopPrice;
+      if (!Number.isFinite(fillPrice)) {
+        return this._rejectOrder(normalized, "no price available for market order");
+      }
       return this._fillOrder(normalized, fillPrice, "market");
     }
     this.openOrders.set(normalized.orderId, normalized);
@@ -3480,6 +3484,14 @@ function oppositeSide2(side) {
 function toBrokerSide(side) {
   return side === "long" || side === "buy" ? "buy" : "sell";
 }
+function matchesOrderRef(reference, order) {
+  if (!reference || !order) return false;
+  if (reference.orderId && order.orderId && reference.orderId === order.orderId) return true;
+  if (reference.clientOrderId && order.clientOrderId && reference.clientOrderId === order.clientOrderId) {
+    return true;
+  }
+  return false;
+}
 var TradingSession = class _TradingSession {
   constructor({
     id,
@@ -3541,13 +3553,26 @@ var TradingSession = class _TradingSession {
   _wireBrokerEvents() {
     this.broker.on?.("order:filled", (order) => this._onBrokerFillSync(order));
     this.broker.on?.("order:submitted", (order) => this._record("order:submitted", order));
-    this.broker.on?.("order:canceled", (order) => this._record("order:canceled", order));
+    this.broker.on?.(
+      "order:canceled",
+      (order) => this._onBrokerTerminalOrderSync("order:canceled", order)
+    );
+    this.broker.on?.(
+      "order:rejected",
+      (order) => this._onBrokerTerminalOrderSync("order:rejected", order)
+    );
     this.broker.on?.("equity:update", (acct) => this._record("equity:update", acct));
+  }
+  _onBrokerTerminalOrderSync(event, order) {
+    this._record(event, order);
+    if (matchesOrderRef(this._pendingBracket, order)) {
+      this._pendingBracket = null;
+    }
   }
   // Sync event handler — fire-and-forget async OCO work via a stored promise
   _onBrokerFillSync(order) {
     this._record("order:filled", order);
-    if (this._pendingBracket && String(order.clientOrderId || "").includes("-entry-")) {
+    if (matchesOrderRef(this._pendingBracket, order)) {
       const staged = this._pendingBracket;
       this._pendingBracket = null;
       this._pendingCancelPromise = Promise.resolve(
@@ -3622,19 +3647,31 @@ var TradingSession = class _TradingSession {
     }
     size = roundStep(size, this.qtyStep);
     if (!(size >= this.minQty)) throw new Error(`sized below minQty (${size})`);
+    const entryClientOrderId = `${this.id}-entry-${Date.now()}`;
     const receipt = await this.broker.submitOrder({
       symbol: this.symbol,
       side: toBrokerSide(side),
       type,
       qty: size,
       limitPrice: type === "limit" ? limitPrice : void 0,
-      clientOrderId: `${this.id}-entry-${Date.now()}`
+      clientOrderId: entryClientOrderId
     });
     if (Number.isFinite(stop) || Number.isFinite(target) || Number.isFinite(rr)) {
       if (receipt.status === "filled") {
         await this._attachBracket({ side, size, stop, target, rr, entryRef, receipt });
+      } else if (receipt.status !== "rejected") {
+        this._pendingBracket = {
+          side,
+          size,
+          stop,
+          target,
+          rr,
+          entryRef,
+          orderId: receipt.orderId,
+          clientOrderId: receipt.clientOrderId || entryClientOrderId
+        };
       } else {
-        this._pendingBracket = { side, size, stop, target, rr, entryRef };
+        this._pendingBracket = null;
       }
     }
     await this.refresh();

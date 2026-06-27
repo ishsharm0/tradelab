@@ -93,4 +93,19 @@ const liveEngine = liveApi.createLiveEngine({
   broker,
 });
 const liveStatus = liveEngine.getStatus();
+const session = new liveApi.TradingSession({
+  id: "typed-session",
+  symbol: "AAPL",
+  broker,
+  confirmLive: false,
+});
+const dashboard = liveApi.createDashboardServer({
+  source: {
+    eventBus: session.eventBus,
+    refresh: async () => session.getStatus(),
+    getStatus: () => session.getStatus(),
+  },
+  port: 0,
+});
 void liveStatus;
+void dashboard;

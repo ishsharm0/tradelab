@@ -129,7 +129,7 @@ A typical autonomous paper-trading loop:
 4. Call `session_status` any time for a snapshot of positions, orders, equity, and risk state.
 5. Call `flatten` or `halt_all` to emergency-close everything.
 
-If you attach a strategy with `attach_strategy`, `feed_price` will auto-evaluate it each bar and place orders when the session is flat.
+If you attach a strategy with `attach_strategy`, `feed_price` will auto-evaluate it each bar and place orders when the session is flat. Attached strategies receive the same `{ candles, index, bar, equity, openPosition, pendingOrder }` context as `backtest()`, and returned order intents default to a market order unless `type` is set.
 
 ## Typical Research Flow
 

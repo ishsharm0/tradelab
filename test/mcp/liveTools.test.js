@@ -29,6 +29,28 @@ test("agent can create a paper session, feed price, place a bracket, and flatten
   await liveTools.halt_all.handler({});
 });
 
+test("attached built-in strategy auto-evaluates on feed_price", async () => {
+  await liveTools.create_session.handler({
+    sessionId: "auto-buy-hold",
+    symbol: "AAPL",
+    equity: 10_000,
+  });
+  await liveTools.attach_strategy.handler({
+    sessionId: "auto-buy-hold",
+    strategy: "buy-hold",
+    params: { holdBars: 5, stopPct: 10 },
+  });
+
+  const status = await liveTools.feed_price.handler({
+    sessionId: "auto-buy-hold",
+    bar: { time: 1, open: 100, high: 100, low: 100, close: 100, volume: 1 },
+  });
+
+  assert.equal(status.positions.length, 1);
+  assert.equal(status.positions[0].side, "long");
+  await liveTools.halt_all.handler({});
+});
+
 test("place_order on an unknown session errors clearly", async () => {
   await assert.rejects(() =>
     liveTools.place_order.handler({ sessionId: "ghost", side: "long", type: "market", qty: 1 })

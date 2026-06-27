@@ -3329,10 +3329,11 @@ function backtestPortfolio({
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
   const metricsInterval = interval ?? systems[0]?.interval;
+  const finalState = portfolioState(runners, equity);
   const metrics = buildMetrics({
     closed: trades,
     equityStart: equity,
-    equityFinal: eqSeries.length ? eqSeries[eqSeries.length - 1].equity : equity,
+    equityFinal: eqSeries.length ? eqSeries[eqSeries.length - 1].equity : finalState.markedEquity,
     candles: orderedCandles,
     estBarMs: estimateBarMs(orderedCandles),
     eqSeries,
@@ -3967,13 +3968,17 @@ function monteCarlo({
   if (!Array.isArray(tradePnls) || tradePnls.length === 0) {
     throw new Error("monteCarlo() requires a non-empty tradePnls array");
   }
+  const runCount = Math.floor(Number(iterations));
+  if (!Number.isFinite(runCount) || runCount < 1) {
+    throw new Error("monteCarlo() requires positive iterations");
+  }
   const rng = makeRng(seed);
   const n = tradePnls.length;
   const block = Math.max(1, Math.floor(blockSize));
   const finals = [];
   const drawdowns = [];
   const pathSamples = Array.from({ length: n + 1 }, () => []);
-  for (let it = 0; it < iterations; it += 1) {
+  for (let it = 0; it < runCount; it += 1) {
     const path7 = [equityStart];
     let equity = equityStart;
     let filled = 0;
@@ -4005,7 +4010,7 @@ function monteCarlo({
     p95: percentile2(sorted, 0.95)
   });
   return {
-    iterations,
+    iterations: runCount,
     blockSize: block,
     finalEquity: bands(sortedFinals),
     maxDrawdown: bands(sortedDd),

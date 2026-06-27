@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-06-27
+
+### Fixed
+
+- `backtestPortfolio()` now reports aggregate `metrics.finalEquity` correctly when `collectEqSeries: false`.
+- `PaperEngine` now rejects market orders that have no price reference instead of filling them at zero.
+- `TradingSession` now clears staged brackets when an async entry is rejected or canceled, and staged brackets are matched by order id/client order id instead of a loose string check.
+- MCP `attach_strategy` now evaluates built-in strategies with the normal backtest signal context and auto-places returned order intents from `feed_price`.
+- `research.monteCarlo()` now rejects non-positive iteration counts instead of returning empty bands and `NaN` probability fields.
+- Public live types now include `TradingSessionOptions.confirmLive` and optional dashboard `source.refresh()`.
+
 ## [1.2.0] - 2026-06-26
 
 ### Added
