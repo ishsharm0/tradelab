@@ -72,3 +72,80 @@ test("/events streams a bussed event as SSE", async () => {
 test("createDashboardServer is exported from tradelab/live", () => {
   assert.equal(typeof live.createDashboardServer, "function");
 });
+
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    http
+      .get(url, (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode, body }));
+      })
+      .on("error", reject);
+  });
+}
+
+function postJson(url, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
+      },
+      (res) => {
+        let buf = "";
+        res.on("data", (c) => (buf += c));
+        res.on("end", () => resolve({ status: res.statusCode, body: buf }));
+      }
+    );
+    req.on("error", reject);
+    req.write(data);
+    req.end();
+  });
+}
+
+test("POST /command flatten invokes source.flatten()", async () => {
+  let flattened = false;
+  const eventBus = new EventBus();
+  const source = {
+    eventBus,
+    getStatus: () => ({ symbol: "X" }),
+    flatten: async () => {
+      flattened = true;
+    },
+  };
+  const dash = createDashboardServer({ source, port: 0 });
+  const url = await dash.start();
+  const res = await postJson(`${url}/command`, { type: "flatten" });
+  assert.equal(res.status, 200);
+  assert.equal(flattened, true);
+  await dash.close();
+});
+
+test("POST /command rejects a non-whitelisted type", async () => {
+  const source = { eventBus: new EventBus(), getStatus: () => ({}) };
+  const dash = createDashboardServer({ source, port: 0 });
+  const url = await dash.start();
+  const res = await postJson(`${url}/command`, { type: "rm_rf" });
+  assert.equal(res.status, 400);
+  await dash.close();
+});
+
+test("/state awaits source.refresh() when present", async () => {
+  let refreshed = false;
+  const source = {
+    eventBus: new EventBus(),
+    refresh: async () => {
+      refreshed = true;
+      return {};
+    },
+    getStatus: () => ({ refreshed }),
+  };
+  const dash = createDashboardServer({ source, port: 0 });
+  const url = await dash.start();
+  const res = await getJson(`${url}/state`);
+  assert.equal(JSON.parse(res.body).refreshed, true);
+  await dash.close();
+});
