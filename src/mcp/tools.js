@@ -5,6 +5,10 @@ import { getStrategy, listStrategies } from "../strategies/index.js";
 import { grid } from "../engine/grid.js";
 import { monteCarlo, deflatedSharpe } from "../research/index.js";
 import { liveTools } from "./liveTools.js";
+import { researchTools as researchSessionTools } from "./researchSession.js";
+import { createResearchStore } from "../research/store.js";
+
+const researchStore = createResearchStore();
 
 function summarizeMetrics(metrics) {
   const {
@@ -93,10 +97,31 @@ export const researchTools = {
         collectReplay: false,
         ...(args.backtestOptions || {}),
       });
+      const metrics = summarizeMetrics(result.metrics);
+      if (args.researchId) {
+        let verdict = null;
+        try {
+          const psr = deflatedSharpe({
+            sharpe: result.metrics.sharpe,
+            sampleSize: result.metrics.trades,
+            numTrials: args.numTrials ?? 1,
+          });
+          verdict = {
+            deflatedSharpe: psr,
+            overfit: Number.isFinite(psr) ? psr < 0.9 : false,
+            note: Number.isFinite(psr) ? `PSR ${(psr * 100).toFixed(1)}%` : "insufficient data",
+          };
+        } catch {
+          verdict = { deflatedSharpe: null, overfit: false, note: "verdict unavailable" };
+        }
+        await researchStore.log(args.researchId, {
+          hypothesis: args.strategy, params: args.params || {}, metrics, verdict,
+        }).catch(() => {});
+      }
       return {
         symbol: result.symbol,
         interval: result.interval,
-        metrics: summarizeMetrics(result.metrics),
+        metrics,
         tradesPreview: result.positions.slice(0, 10).map((p) => ({
           side: p.side,
           entry: p.entryFill ?? p.entry,
@@ -262,4 +287,4 @@ export const researchPlusTools = {
   },
 };
 
-export const mcpTools = { ...researchTools, ...researchPlusTools, ...liveTools };
+export const mcpTools = { ...researchTools, ...researchPlusTools, ...liveTools, ...researchSessionTools() };
