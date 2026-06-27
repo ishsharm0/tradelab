@@ -154,4 +154,19 @@ For a strategy you might run live, combine several checks:
 5. Penalize multiple trials with deflated Sharpe or sweep haircut.
 6. Re-run on a later untouched data period before using live credentials.
 
+## Agent Research Loop
+
+`createResearchStore({ dir })` persists a research session so an agent (or you) can iterate across many runs without losing the thread:
+
+```js
+import { createResearchStore } from "tradelab";
+
+const store = createResearchStore({ dir: ".tradelab/research" });
+await store.open("btc-trend", "find a robust BTC trend strategy");
+await store.log("btc-trend", { hypothesis: "ema 20/50", params: { fast: 20, slow: 50 }, metrics, verdict });
+const { entries, summary } = await store.recall("btc-trend");
+```
+
+`recall` returns a synthesized summary naming the best Sharpe so far and how many runs were flagged as likely overfit. Over MCP, the same store backs the `research_open`, `research_log`, `research_recall`, and `research_close` tools, and `run_backtest` auto-logs an overfitting verdict when called with a `researchId`. See [the MCP guide](mcp.md).
+
 <small>[Back to docs](README.md)</small>

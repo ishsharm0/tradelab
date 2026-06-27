@@ -6,7 +6,7 @@
 
 ## Safety
 
-**Paper is the default and always safe.** Every session is paper unless you explicitly request live mode. Live mode requires all three gates simultaneously — if any is missing the call throws and nothing is created:
+**Paper is the default and always safe.** Every session is paper unless you explicitly request live mode. Live mode requires all three gates simultaneously. If any is missing the call throws and nothing is created:
 
 1. Environment variable `TRADELAB_ALLOW_LIVE=true` must be set in the server process.
 2. The `create_session` call must include `confirmLive: true`.
@@ -14,8 +14,8 @@
 
 Every session also enforces:
 
-- `maxDailyLossPct` — if realized day PnL drops below this percentage of starting equity, all new `place_order` calls are rejected for the remainder of the day.
-- `halt_all` — an emergency kill-switch tool that flattens all positions and stops all sessions in the server process.
+- `maxDailyLossPct`: if realized day PnL drops below this percentage of starting equity, all new `place_order` calls are rejected for the remainder of the day.
+- `halt_all`: an emergency kill-switch tool that flattens all positions and stops all sessions in the server process.
 
 Brackets (stop + target) are true OCO: when one leg fills, the sibling is canceled automatically.
 

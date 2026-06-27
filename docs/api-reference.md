@@ -108,6 +108,7 @@ registerStrategy("my-strategy", {
 | `exportTradesCsv(trades, options)` | Write a trade or position CSV ledger         |
 | `exportMetricsJSON(options)`       | Write machine-readable metrics JSON          |
 | `exportBacktestArtifacts(options)` | Write HTML, CSV, and JSON artifacts together |
+| `summarize(metrics, options)`      | Render metrics into one plain-English paragraph |
 
 ### Research
 
@@ -126,6 +127,8 @@ import { research } from "tradelab";
 | `research.normalCdf(x)`                                      | Standard normal CDF                                        |
 | `research.normalPpf(p)`                                      | Standard normal inverse CDF                                |
 | `research.moments(values)`                                   | Mean, standard deviation, skew, kurtosis                   |
+
+For the agent research loop, `createResearchStore({ dir })` returns a file-backed `{ open, log, recall, close }` store for tracking strategy hypotheses, their metrics, and overfitting verdicts across runs. The MCP `research_*` tools wrap it.
 
 ### Indicators And Helpers
 
@@ -183,6 +186,17 @@ import { LiveEngine, PaperEngine, createDashboardServer } from "tradelab/live";
 | `createLiveOrchestrator(options)` | Factory for `LiveOrchestrator`               |
 | `PaperEngine`                     | In-process broker simulator                  |
 | `createPaperEngine(options)`      | Factory for `PaperEngine`                    |
+
+### Sessions And Notifications
+
+| Export                            | Summary                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
+| `TradingSession`                  | One account, one or many symbols, with risk-sized brackets  |
+| `SessionManager`                  | Create and track sessions; gates live mode                  |
+| `createSessionManager(options)`   | Factory for `SessionManager`                                |
+| `attachNotifier(session, options)`| Fire a callback or webhook on fills, risk halts, drawdown   |
+
+`SessionManager.create({ symbols: ["BTC", "ETH"] })` opens a multi-symbol portfolio session; pass a single `symbol` for the original behavior. Per-symbol calls take a `symbol` argument (`pushBar(bar, symbol)`, `placeOrder({ symbol })`). Portfolio-level `RiskManager` options `maxGrossExposurePct` and `maxNetExposurePct` (default 0, off) reject orders that would breach the cap.
 
 ### Broker Adapters
 
@@ -287,7 +301,7 @@ import { createServer, startStdioServer } from "tradelab/mcp";
 | `createServer()`     | Build an MCP server with tradelab tools |
 | `startStdioServer()` | Start the MCP server on stdio           |
 
-See [mcp.md](mcp.md) for client configuration and tool payload examples.
+The server exposes 25 tools: 8 research, 4 research-loop (`research_open`, `research_log`, `research_recall`, `research_close`), and 13 live-trading (sessions, orders, brackets, kill-switch). See [mcp.md](mcp.md) for client configuration and tool payload examples.
 
 ## Types
 

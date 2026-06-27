@@ -161,11 +161,11 @@ export class TradingSession {
     return order;
   }
 
-  // Sync event handler — fire-and-forget async OCO work via a stored promise
+  // Sync event handler; fire-and-forget async OCO work via a stored promise
   _onBrokerFillSync(order) {
     this._record("order:filled", this._withMeta(order));
 
-    // Resting entry order (e.g. a limit) just filled — attach its staged bracket.
+    // Resting entry order (e.g. a limit) just filled; attach its staged bracket.
     // Scan _pendingBrackets for a match (works for both single- and multi-symbol sessions).
     for (const [sym, staged] of this._pendingBrackets) {
       if (matchesOrderRef(staged, order)) {
@@ -179,11 +179,11 @@ export class TradingSession {
       }
     }
 
-    // Track bracket leg fills for OCO — find which symbol this fill belongs to
+    // Track bracket leg fills for OCO; find which symbol this fill belongs to
     for (const [sym, bracket] of this.brackets) {
       if (bracket && (order.orderId === bracket.stopId || order.orderId === bracket.targetId)) {
         const siblingId = order.orderId === bracket.stopId ? bracket.targetId : bracket.stopId;
-        // Schedule the cancel — simulateBar is still iterating orders, so we must not await here.
+        // Schedule the cancel; simulateBar is still iterating orders, so we must not await here.
         // We keep a pending cancel promise that refresh() awaits.
         this._pendingCancelPromise = (async () => {
           if (siblingId) await this.broker.cancelOrder(siblingId).catch(() => {});
@@ -310,7 +310,7 @@ export class TradingSession {
       clientOrderId: entryClientOrderId,
     });
 
-    // Stage bracket if needed — market orders fill synchronously in PaperEngine
+    // Stage bracket if needed; market orders fill synchronously in PaperEngine
     if (Number.isFinite(stop) || Number.isFinite(target) || Number.isFinite(rr)) {
       const parentEntryId = receipt?.clientOrderId ?? entryClientOrderId;
       if (receipt.status === "filled") {

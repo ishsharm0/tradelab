@@ -198,6 +198,15 @@ tradelab walk-forward \
 
 You can pass `--strategy ./strategy.mjs` for local modules that export `signalFactory(params, args)` and either `parameterSets` or `createParameterSets(args)`.
 
+### Run a Preset
+
+```bash
+tradelab run ema-cross --source yahoo --symbol SPY --period 1y
+tradelab run rsi-reversion --source csv --csvPath ./btc.csv --params '{"period":14,"oversold":25}'
+```
+
+`tradelab run <preset>` backtests a named built-in strategy and prints a plain-English summary of the result. Use `--params` to override the preset defaults. Run `tradelab run` with an unknown name to see the available presets.
+
 ### Live and Paper
 
 ```bash

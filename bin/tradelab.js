@@ -271,7 +271,7 @@ async function loadWalkForwardStrategy(strategyArg, args) {
 }
 
 function printHelp() {
-  console.log(`tradelab — backtesting toolkit for Node.js
+  console.log(`tradelab: agent-native trading engine for Node.js
 
 Usage: tradelab <command> [options]
 

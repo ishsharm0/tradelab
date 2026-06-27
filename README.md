@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://i.imgur.com/HGvvQbq.png" width="420" alt="tradelab logo" />
 
-  <p><strong>A Node.js backtesting toolkit for serious trading strategy research.</strong></p>
+  <p><strong>An agent-native Node.js trading engine: research, backtest, and trade live through one signal contract.</strong></p>
 
 [![npm version](https://img.shields.io/npm/v/tradelab?color=0f172a&label=npm&logo=npm)](https://www.npmjs.com/package/tradelab)
 [![GitHub](https://img.shields.io/badge/github-ishsharm0/tradelab-0f172a?logo=github)](https://github.com/ishsharm0/tradelab)
@@ -13,17 +13,18 @@
 
 ---
 
-A Node.js toolkit for testing, validating, and operating trading strategies.
+A Node.js toolkit for testing, validating, and operating trading strategies, built so humans and AI agents work from the same primitives.
 
-tradelab gives you one `signal()` contract across research and execution:
+One `signal()` contract runs across research and execution:
 
 - run candle or tick backtests
 - model slippage, commissions, borrow, carry, and funding
 - validate parameters with walk-forward tests and research statistics
 - combine multiple systems into a shared-capital portfolio
-- move the same strategy into paper or live execution
+- move the same strategy into paper or live execution, single or multi-symbol
 - export reports, metrics, and trade ledgers
-- expose research tools through an MCP server
+
+**Agent-native.** The `tradelab-mcp` server exposes 25 tools over stdio, so an AI agent can run the whole loop itself: pull data, run and score backtests, track hypotheses across runs with built-in overfitting guards, then open a paper or live session and place risk-sized bracket orders behind a kill-switch. Agents get the same depth a quant does, not a thin read-only wrapper. See [docs/mcp.md](docs/mcp.md).
 
 ```bash
 npm install tradelab
@@ -270,7 +271,7 @@ Add `--dashboard --dashboardPort 4317` to open a local Server-Sent Events dashbo
 
 ## MCP Server
 
-`tradelab-mcp` exposes research and live-trading tools over stdio to any MCP-capable agent (Claude Desktop, Cursor, etc.). See [docs/mcp.md](docs/mcp.md) for the full tool reference and agent trading guide.
+`tradelab-mcp` exposes 25 tools over stdio to any MCP-capable agent (Claude Desktop, Cursor, and similar). They cover the full loop an agent needs to work a strategy end to end: research it, validate it, track the search, then trade it. See [docs/mcp.md](docs/mcp.md) for the full tool reference and agent trading guide.
 
 **Research tools:** `list_strategies`, `fetch_candles`, `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`
 

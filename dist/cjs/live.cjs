@@ -3666,7 +3666,7 @@ var TradingSession = class _TradingSession {
     }
     return order;
   }
-  // Sync event handler — fire-and-forget async OCO work via a stored promise
+  // Sync event handler; fire-and-forget async OCO work via a stored promise
   _onBrokerFillSync(order) {
     this._record("order:filled", this._withMeta(order));
     for (const [sym, staged] of this._pendingBrackets) {

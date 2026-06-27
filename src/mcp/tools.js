@@ -193,7 +193,7 @@ export const researchPlusTools = {
           metrics,
           monteCarlo: null,
           deflatedSharpe: null,
-          note: `Only ${tradePnls.length} trade(s) — need at least 2 for statistical analysis.`,
+          note: `Only ${tradePnls.length} trade(s), need at least 2 for statistical analysis.`,
         };
       }
       const mc = monteCarlo({

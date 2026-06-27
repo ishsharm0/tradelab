@@ -11,8 +11,8 @@ Use this page to choose the right guide. If you are new to tradelab, read the fi
 ## Reference
 
 - [API reference](api-reference.md) - public exports by module.
-- [Research tools](research.md) - Monte Carlo, deflated Sharpe, PBO, and CPCV.
-- [MCP server](mcp.md) - `tradelab-mcp` setup and tool list.
+- [Research tools](research.md) - Monte Carlo, deflated Sharpe, PBO, CPCV, and the agent research loop.
+- [MCP server](mcp.md) - `tradelab-mcp` setup and the 25-tool reference for AI agents.
 - [Strategy examples](examples.md) - complete strategy patterns you can adapt.
 
 ## Common Paths
@@ -26,17 +26,19 @@ Use this page to choose the right guide. If you are new to tradelab, read the fi
 | Test parameter stability          | [Backtesting](backtest-engine.md#walk-forward-validation) |
 | Run a local paper session         | [Live trading](live-trading.md)                           |
 | Connect an MCP client             | [MCP server](mcp.md)                                      |
+| Let an AI agent research and trade | [MCP server](mcp.md)                                     |
 | Check exact function names        | [API reference](api-reference.md)                         |
 
 ## Package Scope
 
-tradelab is built for strategy research and operational dry-runs:
+tradelab is built for strategy research and operational dry-runs, by humans and AI agents alike:
 
 - candle and tick backtests
 - shared-capital portfolio simulation
 - realistic cost assumptions
 - walk-forward validation and overfitting checks
-- paper and live execution through broker adapters
+- single and multi-symbol paper and live execution through broker adapters
+- a 25-tool MCP server so an agent can research, validate, and trade end to end
 - local reports and machine-readable exports
 
 It is not an exchange simulator. It does not try to model full market depth, queue priority, latency, or venue-specific microstructure.
