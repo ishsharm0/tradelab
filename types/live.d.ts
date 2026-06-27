@@ -397,3 +397,100 @@ export function createLiveOrchestrator(options: {
 }): LiveOrchestrator;
 
 export type { SignalResult };
+
+// ── TradingSession / SessionManager ──────────────────────────────────────────
+
+export interface TradingSessionOptions {
+  id?: string;
+  symbol: string;
+  interval?: string;
+  broker: BrokerAdapter;
+  mode?: "paper" | "live";
+  equity?: number;
+  riskPct?: number;
+  maxDailyLossPct?: number;
+  maxPositionPct?: number;
+  qtyStep?: number;
+  minQty?: number;
+  maxLeverage?: number;
+  eventBus?: EventBus;
+}
+
+export interface SessionPlaceOrderOptions {
+  side: "long" | "short" | "buy" | "sell";
+  type?: "market" | "limit" | "stop" | "stop_limit";
+  qty?: number;
+  riskPct?: number;
+  stop?: number;
+  target?: number;
+  rr?: number;
+  limitPrice?: number;
+}
+
+export interface SessionStatus {
+  id: string;
+  symbol: string;
+  interval: string;
+  mode: "paper" | "live";
+  running: boolean;
+  equity: number;
+  dayPnl: number;
+  lastPrice: number | null;
+  positions: BrokerPosition[];
+  openOrders: OrderReceipt[];
+  risk: {
+    halted: boolean;
+    haltReason: string | null;
+    dayPnl: number;
+    dayTrades: number;
+    [key: string]: unknown;
+  };
+}
+
+export class TradingSession {
+  constructor(options: TradingSessionOptions);
+  readonly id: string;
+  readonly symbol: string;
+  readonly interval: string;
+  readonly mode: "paper" | "live";
+  readonly eventBus: EventBus;
+  equity: number;
+  lastPrice: number | null;
+  running: boolean;
+  candleBuffer: import("./index.d.ts").Candle[];
+  static liveAllowed(): boolean;
+  start(): Promise<void>;
+  stop(options?: { flatten?: boolean }): Promise<void>;
+  pushBar(bar: import("./index.d.ts").Candle): Promise<void>;
+  placeOrder(options: SessionPlaceOrderOptions): Promise<OrderReceipt>;
+  closePosition(symbol?: string): Promise<OrderReceipt | null>;
+  flatten(): Promise<void>;
+  cancelOrder(orderId: string): Promise<void>;
+  getAccount(): Promise<AccountInfo>;
+  getPositions(): Promise<BrokerPosition[]>;
+  recentEvents(limit?: number): Array<{ event: string; payload: unknown; t: number }>;
+  getStatus(): SessionStatus;
+  refresh(): Promise<SessionStatus>;
+}
+
+export interface SessionManagerOptions {
+  brokerFactory?: (options: Record<string, unknown>) => BrokerAdapter;
+}
+
+export interface CreateSessionOptions extends Partial<TradingSessionOptions> {
+  id: string;
+  symbol: string;
+  confirmLive?: boolean;
+  broker?: BrokerAdapter;
+}
+
+export class SessionManager {
+  constructor(options?: SessionManagerOptions);
+  create(options: CreateSessionOptions): Promise<TradingSession>;
+  get(id: string): TradingSession | null;
+  list(): TradingSession[];
+  remove(id: string, options?: { flatten?: boolean }): Promise<void>;
+  haltAll(): Promise<void>;
+}
+
+export function createSessionManager(options?: SessionManagerOptions): SessionManager;

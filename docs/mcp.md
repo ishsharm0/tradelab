@@ -2,7 +2,21 @@
 
 <small>[Back to docs](README.md)</small>
 
-`tradelab-mcp` exposes a small research API over the Model Context Protocol. Use it from MCP clients when you want to list built-in strategies, fetch candles, run compact backtests, or run walk-forward checks without writing glue code.
+`tradelab-mcp` exposes both a **research API** (backtest/strategy tools) and a **live trading API** (paper and live sessions) over the Model Context Protocol. Use it from MCP clients to research strategies, run paper trading loops, and optionally place real orders through a gated live mode.
+
+## Safety
+
+**Paper is the default and always safe.** Every session is paper unless you explicitly request live mode. Live mode requires all three gates simultaneously — if any is missing the call throws and nothing is created:
+
+1. Environment variable `TRADELAB_ALLOW_LIVE=true` must be set in the server process.
+2. The `create_session` call must include `confirmLive: true`.
+3. A broker with valid credentials must be resolvable (passed via `brokerFactory` in `SessionManager`).
+
+Every session also enforces:
+- `maxDailyLossPct` — if realized day PnL drops below this percentage of starting equity, all new `place_order` calls are rejected for the remainder of the day.
+- `halt_all` — an emergency kill-switch tool that flattens all positions and stops all sessions in the server process.
+
+Brackets (stop + target) are true OCO: when one leg fills, the sibling is canceled automatically.
 
 The server runs over stdio. It does not start an HTTP port.
 
@@ -71,6 +85,8 @@ Local checkout example:
 
 ## Tools
 
+### Research tools
+
 | Tool              | Use it to                                            |
 | ----------------- | ---------------------------------------------------- |
 | `list_strategies` | See built-in strategy names and tunable parameters   |
@@ -79,6 +95,36 @@ Local checkout example:
 | `walk_forward`    | Run a parameter grid through walk-forward validation |
 
 Tool responses are intentionally compact. They are meant for planning and comparison, not for replacing full HTML/CSV/JSON reports from the CLI.
+
+### Live trading tools
+
+| Tool              | Args (required)                                          | Returns                              |
+| ----------------- | -------------------------------------------------------- | ------------------------------------ |
+| `create_session`  | `sessionId`, `symbol`                                   | session status snapshot              |
+| `list_sessions`   | —                                                        | array of session statuses            |
+| `session_status`  | `sessionId`                                              | full refresh (positions/orders/risk) |
+| `feed_price`      | `sessionId`, `bar` OR `price`                            | status after fills                   |
+| `place_order`     | `sessionId`, `side`, `type?`, `qty?` OR `riskPct`+`stop` | order receipt                        |
+| `close_position`  | `sessionId`, `symbol?`                                   | order receipt                        |
+| `flatten`         | `sessionId`                                              | `{ ok: true }`                       |
+| `cancel_order`    | `sessionId`, `orderId`                                   | `{ ok: true }`                       |
+| `account`         | `sessionId`                                              | broker account info                  |
+| `positions`       | `sessionId`                                              | open positions                       |
+| `recent_events`   | `sessionId`, `limit?`                                    | event log                            |
+| `attach_strategy` | `sessionId`, `strategy`, `params?`                       | `{ ok: true }`                       |
+| `halt_all`        | —                                                        | `{ ok: true, sessionsHalted: N }`    |
+
+## Agent trading loop
+
+A typical autonomous paper-trading loop:
+
+1. Call `create_session` with `sessionId`, `symbol`, and `equity` (paper by default).
+2. Call `feed_price` with each new bar as it arrives — fills resting bracket orders automatically.
+3. Call `place_order` with `riskPct` + `stop` to size automatically; add `target` or `rr` for a bracket.
+4. Call `session_status` any time for a snapshot of positions, orders, equity, and risk state.
+5. Call `flatten` or `halt_all` to emergency-close everything.
+
+If you attach a strategy with `attach_strategy`, `feed_price` will auto-evaluate it each bar and place orders when the session is flat.
 
 ## Typical Research Flow
 
