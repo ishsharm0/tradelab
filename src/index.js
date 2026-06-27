@@ -31,6 +31,7 @@ export { renderHtmlReport, exportHtmlReport } from "./reporting/renderHtmlReport
 export { exportTradesCsv } from "./reporting/exportTradesCsv.js";
 export { exportMetricsJSON } from "./reporting/exportMetricsJson.js";
 export { exportBacktestArtifacts } from "./reporting/exportBacktestArtifacts.js";
+export { summarize } from "./reporting/summarize.js";
 
 export {
   ema,
