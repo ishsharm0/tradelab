@@ -28,3 +28,4 @@ export { LiveOrchestrator, createLiveOrchestrator } from "./orchestrator.js";
 export { createDashboardServer } from "./dashboard/server.js";
 
 export { TradingSession, SessionManager, createSessionManager } from "./session.js";
+export { attachNotifier } from "./notify.js";
