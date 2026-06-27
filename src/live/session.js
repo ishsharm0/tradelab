@@ -69,6 +69,8 @@ export class TradingSession {
     this.events = [];
     this.brackets = new Map(); // symbol -> { stopId, targetId }
     this._pendingBracket = null;
+    this._entryMeta = new Map(); // clientOrderId -> { sizing, rationale }
+    this._legMeta = new Map();   // clientOrderId -> { parentEntryId, leg }
     this._cachedPositions = [];
     this._cachedOpenOrders = [];
     this.candleBuffer = [];
@@ -91,7 +93,7 @@ export class TradingSession {
   _wireBrokerEvents() {
     // Forward broker fills/cancels onto the session bus, and run OCO bracket logic.
     this.broker.on?.("order:filled", (order) => this._onBrokerFillSync(order));
-    this.broker.on?.("order:submitted", (order) => this._record("order:submitted", order));
+    this.broker.on?.("order:submitted", (order) => this._record("order:submitted", this._withMeta(order)));
     this.broker.on?.("order:canceled", (order) =>
       this._onBrokerTerminalOrderSync("order:canceled", order)
     );
@@ -108,17 +110,30 @@ export class TradingSession {
     }
   }
 
+  _withMeta(order) {
+    const key = order.clientOrderId;
+    if (key && this._entryMeta?.has(key)) {
+      const m = this._entryMeta.get(key);
+      return { ...order, sizing: m.sizing, ...(m.rationale ? { rationale: m.rationale } : {}) };
+    }
+    if (key && this._legMeta?.has(key)) {
+      return { ...order, ...this._legMeta.get(key) };
+    }
+    return order;
+  }
+
   // Sync event handler — fire-and-forget async OCO work via a stored promise
   _onBrokerFillSync(order) {
-    this._record("order:filled", order);
+    this._record("order:filled", this._withMeta(order));
 
     // Resting entry order (e.g. a limit) just filled — attach its staged bracket.
     if (matchesOrderRef(this._pendingBracket, order)) {
       const staged = this._pendingBracket;
       this._pendingBracket = null;
+      const parentEntryId = staged.parentEntryId ?? order.clientOrderId;
       // simulateBar may still be iterating orders, so schedule attach without awaiting.
       this._pendingCancelPromise = Promise.resolve(
-        this._attachBracket({ ...staged, receipt: order })
+        this._attachBracket({ ...staged, receipt: order, parentEntryId })
       );
       return;
     }
@@ -177,7 +192,7 @@ export class TradingSession {
     return Boolean(state.halted);
   }
 
-  async placeOrder({ side, type = "market", qty, riskPct, stop, target, rr, limitPrice } = {}) {
+  async placeOrder({ side, type = "market", qty, riskPct, stop, target, rr, limitPrice, rationale, symbol } = {}) {
     if (!this.running) throw new Error("session not started");
     if (this._riskHalted()) throw new Error("session is risk-halted for the day");
     const entryRef = type === "limit" ? limitPrice : this.lastPrice;
@@ -200,7 +215,28 @@ export class TradingSession {
     size = roundStep(size, this.qtyStep);
     if (!(size >= this.minQty)) throw new Error(`sized below minQty (${size})`);
 
+    const fraction = Number.isFinite(riskPct) ? riskPct / 100 : this.riskPct / 100;
+    const targetPx = Number.isFinite(target)
+      ? target
+      : Number.isFinite(rr) && Number.isFinite(stop)
+        ? (side === "long" || side === "buy"
+            ? entryRef + rr * Math.abs(entryRef - stop)
+            : entryRef - rr * Math.abs(entryRef - stop))
+        : null;
+    const sizing = {
+      entry: entryRef,
+      stop: Number.isFinite(stop) ? stop : null,
+      target: targetPx,
+      rr: Number.isFinite(rr) ? rr : null,
+      riskFraction: fraction,
+      riskAmount: this.equity * fraction,
+      qty: size,
+      notional: size * entryRef,
+    };
+
     const entryClientOrderId = `${this.id}-entry-${Date.now()}`;
+    this._entryMeta.set(entryClientOrderId, { sizing, rationale });
+
     const receipt = await this.broker.submitOrder({
       symbol: this.symbol,
       side: toBrokerSide(side),
@@ -212,8 +248,9 @@ export class TradingSession {
 
     // Stage bracket if needed — market orders fill synchronously in PaperEngine
     if (Number.isFinite(stop) || Number.isFinite(target) || Number.isFinite(rr)) {
+      const parentEntryId = receipt?.clientOrderId ?? entryClientOrderId;
       if (receipt.status === "filled") {
-        await this._attachBracket({ side, size, stop, target, rr, entryRef, receipt });
+        await this._attachBracket({ side, size, stop, target, rr, entryRef, receipt, parentEntryId });
       } else if (receipt.status !== "rejected") {
         this._pendingBracket = {
           side,
@@ -224,6 +261,7 @@ export class TradingSession {
           entryRef,
           orderId: receipt.orderId,
           clientOrderId: receipt.clientOrderId || entryClientOrderId,
+          parentEntryId,
         };
       } else {
         this._pendingBracket = null;
@@ -234,7 +272,7 @@ export class TradingSession {
     return receipt;
   }
 
-  async _attachBracket({ side, size, stop, target, rr, entryRef, receipt }) {
+  async _attachBracket({ side, size, stop, target, rr, entryRef, receipt, parentEntryId }) {
     const entryFill = receipt?.avgFillPrice ?? entryRef;
     const risk = Number.isFinite(stop) ? Math.abs(entryFill - stop) : null;
     const targetPrice = Number.isFinite(target)
@@ -248,24 +286,28 @@ export class TradingSession {
     const bracket = {};
 
     if (Number.isFinite(stop)) {
+      const stopCoid = `${this.id}-stop-${Date.now()}`;
+      if (parentEntryId) this._legMeta.set(stopCoid, { parentEntryId, leg: "stop" });
       const stopOrder = await this.broker.submitOrder({
         symbol: this.symbol,
         side: exitSide,
         type: "stop",
         qty: size,
         stopPrice: stop,
-        clientOrderId: `${this.id}-stop-${Date.now()}`,
+        clientOrderId: stopCoid,
       });
       bracket.stopId = stopOrder.orderId;
     }
     if (Number.isFinite(targetPrice)) {
+      const tgtCoid = `${this.id}-target-${Date.now()}`;
+      if (parentEntryId) this._legMeta.set(tgtCoid, { parentEntryId, leg: "target" });
       const tgtOrder = await this.broker.submitOrder({
         symbol: this.symbol,
         side: exitSide,
         type: "limit",
         qty: size,
         limitPrice: targetPrice,
-        clientOrderId: `${this.id}-target-${Date.now()}`,
+        clientOrderId: tgtCoid,
       });
       bracket.targetId = tgtOrder.orderId;
     }
