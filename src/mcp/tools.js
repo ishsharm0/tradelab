@@ -1,7 +1,9 @@
 import { backtest } from "../engine/backtest.js";
 import { walkForwardOptimize } from "../engine/walkForward.js";
-import { getHistoricalCandles } from "../data/index.js";
+import { getHistoricalCandles, candleStats } from "../data/index.js";
 import { getStrategy, listStrategies } from "../strategies/index.js";
+import { grid } from "../engine/grid.js";
+import { monteCarlo, deflatedSharpe } from "../research/index.js";
 import { liveTools } from "./liveTools.js";
 
 function summarizeMetrics(metrics) {
@@ -142,4 +144,122 @@ export const researchTools = {
   },
 };
 
-export const mcpTools = { ...researchTools, ...liveTools };
+export const researchPlusTools = {
+  analyze_robustness: {
+    description:
+      "Run a backtest on a named strategy then Monte Carlo + Deflated Sharpe on the realized trade PnLs. Degrades gracefully if fewer than 2 trades.",
+    handler: async (args) => {
+      const candles = await resolveCandles(args);
+      const factory = getStrategy(args.strategy);
+      const signal = factory(args.params || {});
+      const result = backtest({
+        candles,
+        symbol: args.symbol ?? "UNKNOWN",
+        interval: args.interval,
+        signal,
+        collectReplay: false,
+        warmupBars: 0,
+        ...(args.backtestOptions || {}),
+      });
+      const metrics = summarizeMetrics(result.metrics);
+      const tradePnls = result.positions.map((p) => p.exit.pnl);
+      if (tradePnls.length < 2) {
+        return {
+          metrics,
+          monteCarlo: null,
+          deflatedSharpe: null,
+          note: `Only ${tradePnls.length} trade(s) — need at least 2 for statistical analysis.`,
+        };
+      }
+      const mc = monteCarlo({
+        tradePnls,
+        equityStart: args.equityStart ?? 10_000,
+        iterations: args.iterations ?? 1000,
+        blockSize: args.blockSize ?? 1,
+        seed: args.seed ?? "tradelab-mc",
+      });
+      const dsr = deflatedSharpe({
+        sharpe: result.metrics.sharpe,
+        sampleSize: result.metrics.trades,
+        numTrials: args.numTrials ?? 1,
+        sharpeStd: args.sharpeStd ?? 0,
+        skew: args.skew ?? 0,
+        kurtosis: args.kurtosis ?? 3,
+      });
+      return { metrics, monteCarlo: mc, deflatedSharpe: dsr };
+    },
+  },
+
+  optimize_strategy: {
+    description:
+      "In-process grid sweep of a named strategy. Returns a leaderboard ranked by a chosen metric (default: profitFactor).",
+    handler: async (args) => {
+      const candles = await resolveCandles(args);
+      const factory = getStrategy(args.strategy);
+      const scoreBy = args.scoreBy ?? "profitFactor";
+      const paramSets = grid(args.grid || {});
+      const rows = paramSets.map((params) => {
+        const signal = factory(params);
+        const result = backtest({
+          candles,
+          symbol: args.symbol ?? "UNKNOWN",
+          interval: args.interval,
+          signal,
+          collectReplay: false,
+          ...(args.backtestOptions || {}),
+        });
+        const raw = result.metrics[scoreBy];
+        const score = Number.isFinite(raw) ? raw : -Infinity;
+        return { params, score, metrics: summarizeMetrics(result.metrics) };
+      });
+      rows.sort((a, b) => b.score - a.score);
+      return { leaderboard: rows, best: rows[0] ?? null };
+    },
+  },
+
+  compare_strategies: {
+    description:
+      "Run several named strategies on the same candle dataset and return a ranked comparison.",
+    handler: async (args) => {
+      const candles = await resolveCandles(args);
+      const scoreBy = args.scoreBy ?? "profitFactor";
+      const entries = args.strategies ?? [];
+      const rows = entries.map(({ strategy, params }) => {
+        const factory = getStrategy(strategy);
+        const signal = factory(params || {});
+        const result = backtest({
+          candles,
+          symbol: args.symbol ?? "UNKNOWN",
+          interval: args.interval,
+          signal,
+          collectReplay: false,
+          ...(args.backtestOptions || {}),
+        });
+        const raw = result.metrics[scoreBy];
+        const score = Number.isFinite(raw) ? raw : -Infinity;
+        return { strategy, params: params ?? {}, score, metrics: summarizeMetrics(result.metrics) };
+      });
+      rows.sort((a, b) => b.score - a.score);
+      return { rankedBy: scoreBy, results: rows };
+    },
+  },
+
+  candle_stats: {
+    description:
+      "Return shape statistics (count, date range, price range, estimated interval) for an inline candle array or a data spec. Useful for sanity-checking data before backtesting.",
+    handler: async (args) => {
+      const candles = await resolveCandles(args);
+      const stats = candleStats(candles);
+      if (!stats) {
+        return { stats: null, note: "No candles returned." };
+      }
+      const gapNote =
+        stats.estimatedIntervalMin > 0
+          ? `Estimated bar interval ~${stats.estimatedIntervalMin} min.`
+          : "Could not estimate interval.";
+      return { stats, note: gapNote };
+    },
+  },
+};
+
+export const mcpTools = { ...researchTools, ...researchPlusTools, ...liveTools };
