@@ -3194,6 +3194,7 @@ function forceExitAll(runners, time) {
 function backtestPortfolio({
   systems = [],
   equity = 1e4,
+  interval,
   allocation = "equal",
   collectEqSeries = true,
   collectReplay = false,
@@ -3327,17 +3328,19 @@ function backtestPortfolio({
   const replay = combineReplay(systemResults, eqSeries, collectReplay);
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
+  const metricsInterval = interval ?? systems[0]?.interval;
   const metrics = buildMetrics({
     closed: trades,
     equityStart: equity,
     equityFinal: eqSeries.length ? eqSeries[eqSeries.length - 1].equity : equity,
     candles: orderedCandles,
     estBarMs: estimateBarMs(orderedCandles),
-    eqSeries
+    eqSeries,
+    interval: metricsInterval
   });
   return {
     symbol: "PORTFOLIO",
-    interval: void 0,
+    interval: metricsInterval,
     range: void 0,
     trades,
     positions,
@@ -3632,13 +3635,32 @@ function walkForwardOptimize({
 // src/engine/optimize.js
 var import_node_worker_threads = require("node:worker_threads");
 var import_node_os = __toESM(require("node:os"), 1);
-var import_meta = {};
+var import_node_fs = require("node:fs");
+var import_node_path = __toESM(require("node:path"), 1);
+var import_node_url = require("node:url");
 function defaultConcurrency() {
   return Math.max(1, (import_node_os.default.cpus()?.length ?? 2) - 1);
 }
 function scoreValue(metrics, scoreBy) {
   const v = metrics?.[scoreBy];
   return Number.isFinite(v) ? v : -Infinity;
+}
+function callerModuleDir() {
+  const stack = new Error().stack || "";
+  const lines = stack.split("\n").slice(1);
+  const match = lines.map((line) => line.match(/(?:\()?(file:\/\/\/[^\s)]+|\/[^\s)]+):\d+:\d+/)).find(Boolean);
+  if (!match) return process.cwd();
+  const filePath = match[1].startsWith("file://") ? (0, import_node_url.fileURLToPath)(match[1]) : match[1];
+  return import_node_path.default.dirname(filePath);
+}
+function workerUrl() {
+  const here = callerModuleDir();
+  const candidates = [
+    import_node_path.default.join(here, "optimizeWorker.js"),
+    import_node_path.default.join(here, "..", "..", "src", "engine", "optimizeWorker.js"),
+    import_node_path.default.join(process.cwd(), "src", "engine", "optimizeWorker.js")
+  ];
+  return (0, import_node_url.pathToFileURL)(candidates.find((candidate) => (0, import_node_fs.existsSync)(candidate)) || candidates[0]);
 }
 function optimize({
   candles,
@@ -3682,7 +3704,7 @@ function optimize({
       worker.postMessage({ type: "run", index, params: parameterSets[index] });
     };
     for (let i = 0; i < poolSize; i += 1) {
-      const worker = new import_node_worker_threads.Worker(new URL("./optimizeWorker.js", import_meta.url), {
+      const worker = new import_node_worker_threads.Worker(workerUrl(), {
         workerData: { candles, signalModulePath, interval, backtestOptions }
       });
       workers.push(worker);
@@ -3952,22 +3974,22 @@ function monteCarlo({
   const drawdowns = [];
   const pathSamples = Array.from({ length: n + 1 }, () => []);
   for (let it = 0; it < iterations; it += 1) {
-    const path6 = [equityStart];
+    const path7 = [equityStart];
     let equity = equityStart;
     let filled = 0;
     while (filled < n) {
       const start = randInt(rng, n);
       for (let k = 0; k < block && filled < n; k += 1) {
         equity += tradePnls[(start + k) % n];
-        path6.push(equity);
+        path7.push(equity);
         filled += 1;
       }
     }
-    for (let step = 0; step < path6.length; step += 1) {
-      pathSamples[step].push(path6[step]);
+    for (let step = 0; step < path7.length; step += 1) {
+      pathSamples[step].push(path7[step]);
     }
     finals.push(equity);
-    drawdowns.push(maxDrawdownOf(path6));
+    drawdowns.push(maxDrawdownOf(path7));
   }
   const sortedFinals = [...finals].sort((a, b) => a - b);
   const sortedDd = [...drawdowns].sort((a, b) => a - b);

@@ -659,6 +659,7 @@ export function optimize(options: {
 export function backtestPortfolio(options: {
   systems: PortfolioSystem[];
   equity?: number;
+  interval?: string;
   allocation?: "equal" | "weight";
   collectEqSeries?: boolean;
   collectReplay?: boolean;

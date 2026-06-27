@@ -1,5 +1,5 @@
 import http from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,13 +22,26 @@ const FALLBACK_HTML = `<!doctype html>
   </body>
 </html>`;
 
-function readDashboardHtml() {
-  if (import.meta.url) {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const htmlPath = path.join(here, "..", "..", "..", "templates", "dashboard.html");
-    return readFileSync(htmlPath, "utf8");
-  }
+function callerModuleDir() {
+  const stack = new Error().stack || "";
+  const lines = stack.split("\n").slice(1);
+  const match = lines
+    .map((line) => line.match(/(?:\()?(file:\/\/\/[^\s)]+|\/[^\s)]+):\d+:\d+/))
+    .find(Boolean);
+  if (!match) return process.cwd();
+  const filePath = match[1].startsWith("file://") ? fileURLToPath(match[1]) : match[1];
+  return path.dirname(filePath);
+}
 
+function readDashboardHtml() {
+  const here = callerModuleDir();
+  const candidates = [
+    path.join(here, "..", "..", "..", "templates", "dashboard.html"),
+    path.join(here, "..", "..", "templates", "dashboard.html"),
+    path.join(process.cwd(), "templates", "dashboard.html"),
+  ];
+  const htmlPath = candidates.find((candidate) => existsSync(candidate));
+  if (htmlPath) return readFileSync(htmlPath, "utf8");
   try {
     return readFileSync(path.join(process.cwd(), "templates", "dashboard.html"), "utf8");
   } catch {

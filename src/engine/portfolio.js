@@ -148,6 +148,7 @@ function forceExitAll(runners, time) {
 export function backtestPortfolio({
   systems = [],
   equity = 10_000,
+  interval,
   allocation = "equal",
   collectEqSeries = true,
   collectReplay = false,
@@ -307,6 +308,7 @@ export function backtestPortfolio({
   const replay = combineReplay(systemResults, eqSeries, collectReplay);
   const allCandles = systems.flatMap((system) => system.candles || []);
   const orderedCandles = [...allCandles].sort((left, right) => left.time - right.time);
+  const metricsInterval = interval ?? systems[0]?.interval;
   const metrics = buildMetrics({
     closed: trades,
     equityStart: equity,
@@ -314,11 +316,12 @@ export function backtestPortfolio({
     candles: orderedCandles,
     estBarMs: estimateBarMs(orderedCandles),
     eqSeries,
+    interval: metricsInterval,
   });
 
   return {
     symbol: "PORTFOLIO",
-    interval: undefined,
+    interval: metricsInterval,
     range: undefined,
     trades,
     positions,

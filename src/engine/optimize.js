@@ -1,5 +1,8 @@
 import { Worker } from "node:worker_threads";
 import os from "node:os";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 function defaultConcurrency() {
   return Math.max(1, (os.cpus()?.length ?? 2) - 1);
@@ -8,6 +11,27 @@ function defaultConcurrency() {
 function scoreValue(metrics, scoreBy) {
   const v = metrics?.[scoreBy];
   return Number.isFinite(v) ? v : -Infinity;
+}
+
+function callerModuleDir() {
+  const stack = new Error().stack || "";
+  const lines = stack.split("\n").slice(1);
+  const match = lines
+    .map((line) => line.match(/(?:\()?(file:\/\/\/[^\s)]+|\/[^\s)]+):\d+:\d+/))
+    .find(Boolean);
+  if (!match) return process.cwd();
+  const filePath = match[1].startsWith("file://") ? fileURLToPath(match[1]) : match[1];
+  return path.dirname(filePath);
+}
+
+function workerUrl() {
+  const here = callerModuleDir();
+  const candidates = [
+    path.join(here, "optimizeWorker.js"),
+    path.join(here, "..", "..", "src", "engine", "optimizeWorker.js"),
+    path.join(process.cwd(), "src", "engine", "optimizeWorker.js"),
+  ];
+  return pathToFileURL(candidates.find((candidate) => existsSync(candidate)) || candidates[0]);
 }
 
 export function optimize({
@@ -59,7 +83,7 @@ export function optimize({
     };
 
     for (let i = 0; i < poolSize; i += 1) {
-      const worker = new Worker(new URL("./optimizeWorker.js", import.meta.url), {
+      const worker = new Worker(workerUrl(), {
         workerData: { candles, signalModulePath, interval, backtestOptions },
       });
       workers.push(worker);

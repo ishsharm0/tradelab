@@ -156,6 +156,30 @@ test("backtestPortfolio aggregates multiple systems into one result", () => {
   assert.ok(result.eqSeries.length > 0);
 });
 
+test("backtestPortfolio threads interval into aggregate metrics", () => {
+  const candles = buildCandles(8);
+  const result = backtestPortfolio({
+    equity: 10_000,
+    interval: "1d",
+    systems: [
+      {
+        symbol: "AAA",
+        interval: "1d",
+        candles,
+        warmupBars: 1,
+        flattenAtClose: false,
+        signal({ index, bar }) {
+          if (index !== 1) return null;
+          return { side: "buy", entry: bar.close, stop: bar.close - 1, rr: 2 };
+        },
+      },
+    ],
+  });
+
+  assert.equal(result.interval, "1d");
+  assert.equal(result.metrics.annualizationPeriods, 252);
+});
+
 test("backtestPortfolio sizes later systems against live shared equity and capital caps", () => {
   const candles = [
     { time: Date.UTC(2025, 0, 2, 14, 30), open: 100, high: 100, low: 100, close: 100 },

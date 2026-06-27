@@ -3317,7 +3317,6 @@ var import_node_http = __toESM(require("node:http"), 1);
 var import_node_fs2 = require("node:fs");
 var import_node_path2 = __toESM(require("node:path"), 1);
 var import_node_url4 = require("node:url");
-var import_meta = {};
 var FALLBACK_HTML = `<!doctype html>
 <html lang="en">
   <head>
@@ -3336,12 +3335,23 @@ var FALLBACK_HTML = `<!doctype html>
     </script>
   </body>
 </html>`;
+function callerModuleDir() {
+  const stack = new Error().stack || "";
+  const lines = stack.split("\n").slice(1);
+  const match = lines.map((line) => line.match(/(?:\()?(file:\/\/\/[^\s)]+|\/[^\s)]+):\d+:\d+/)).find(Boolean);
+  if (!match) return process.cwd();
+  const filePath = match[1].startsWith("file://") ? (0, import_node_url4.fileURLToPath)(match[1]) : match[1];
+  return import_node_path2.default.dirname(filePath);
+}
 function readDashboardHtml() {
-  if (import_meta.url) {
-    const here = import_node_path2.default.dirname((0, import_node_url4.fileURLToPath)(import_meta.url));
-    const htmlPath = import_node_path2.default.join(here, "..", "..", "..", "templates", "dashboard.html");
-    return (0, import_node_fs2.readFileSync)(htmlPath, "utf8");
-  }
+  const here = callerModuleDir();
+  const candidates = [
+    import_node_path2.default.join(here, "..", "..", "..", "templates", "dashboard.html"),
+    import_node_path2.default.join(here, "..", "..", "templates", "dashboard.html"),
+    import_node_path2.default.join(process.cwd(), "templates", "dashboard.html")
+  ];
+  const htmlPath = candidates.find((candidate) => (0, import_node_fs2.existsSync)(candidate));
+  if (htmlPath) return (0, import_node_fs2.readFileSync)(htmlPath, "utf8");
   try {
     return (0, import_node_fs2.readFileSync)(import_node_path2.default.join(process.cwd(), "templates", "dashboard.html"), "utf8");
   } catch {
