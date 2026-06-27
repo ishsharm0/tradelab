@@ -3,136 +3,592 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>tradelab live</title>
+    <title>tradelab · live</title>
     <style>
       :root {
         color-scheme: dark;
+        --bg: #0b0d12;
+        --surface: #12151c;
+        --surface-2: #171b24;
+        --line: rgba(255, 255, 255, 0.06);
+        --line-2: rgba(255, 255, 255, 0.1);
+        --text: #e7ebf0;
+        --muted: #8a93a3;
+        --up: #3fb950;
+        --down: #f85149;
+        --warn: #d29922;
+        --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+        --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       }
-
+      * {
+        box-sizing: border-box;
+      }
       body {
         margin: 0;
-        font:
-          14px/1.5 ui-monospace,
-          SFMono-Regular,
-          Menlo,
-          monospace;
-        background: #0f172a;
-        color: #e2e8f0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+        font-size: 13px;
+        -webkit-font-smoothing: antialiased;
+      }
+      .num {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      .up {
+        color: var(--up);
+      }
+      .down {
+        color: var(--down);
+      }
+      .muted {
+        color: var(--muted);
       }
 
       header {
-        padding: 16px 24px;
-        border-bottom: 1px solid #1e293b;
         display: flex;
-        gap: 24px;
-        align-items: baseline;
-      }
-
-      h1 {
-        font-size: 16px;
-        margin: 0;
-        color: #38bdf8;
-      }
-
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        align-items: center;
         gap: 16px;
-        padding: 24px;
+        padding: 0 20px;
+        height: 56px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(var(--surface), var(--bg));
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      .brand {
+        font-weight: 650;
+        letter-spacing: -0.01em;
+        font-size: 15px;
+      }
+      .brand b {
+        color: var(--up);
+      }
+      .badge {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line-2);
+        color: var(--muted);
+      }
+      .badge.live {
+        color: var(--down);
+        border-color: rgba(248, 81, 73, 0.4);
+      }
+      .badge.paper {
+        color: var(--up);
+        border-color: rgba(63, 185, 80, 0.35);
+      }
+      .spacer {
+        flex: 1;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        font-family: var(--mono);
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--muted);
+      }
+      .dot.on {
+        background: var(--up);
+        box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.15);
+      }
+      .dot.off {
+        background: var(--down);
+      }
+      button.ctl {
+        font-family: var(--sans);
+        font-size: 12px;
+        font-weight: 550;
+        color: var(--text);
+        background: var(--surface-2);
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+        padding: 7px 12px;
+        cursor: pointer;
+        transition:
+          transform 0.12s ease,
+          background 0.12s ease,
+          border-color 0.12s ease;
+      }
+      button.ctl:hover {
+        background: #1d2230;
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      button.ctl:active {
+        transform: translateY(1px);
+      }
+      button.ctl.danger {
+        color: #ffb4ad;
+        border-color: rgba(248, 81, 73, 0.35);
+      }
+      button.ctl.danger:hover {
+        background: rgba(248, 81, 73, 0.12);
+      }
+
+      .halt-banner {
+        display: none;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 20px;
+        background: rgba(210, 153, 34, 0.12);
+        border-bottom: 1px solid rgba(210, 153, 34, 0.35);
+        color: var(--warn);
+        font-size: 12.5px;
+      }
+      .halt-banner.show {
+        display: flex;
+      }
+
+      main {
+        padding: 20px;
+        display: grid;
+        gap: 16px;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      .kpis {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+      }
+      .kpi {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+      }
+      .kpi .label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+      .kpi .val {
+        font-family: var(--mono);
+        font-size: 28px;
+        font-weight: 600;
+        margin-top: 6px;
+        font-variant-numeric: tabular-nums;
+      }
+      .kpi .sub {
+        font-family: var(--mono);
+        font-size: 12px;
+        margin-top: 2px;
+        color: var(--muted);
       }
 
       .card {
-        background: #111827;
-        border: 1px solid #1e293b;
-        border-radius: 8px;
-        padding: 16px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 10px;
       }
-
-      .card h2 {
-        font-size: 12px;
+      .card > h2 {
+        margin: 0;
+        padding: 13px 16px;
+        font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
-        color: #64748b;
-        margin: 0 0 12px;
-      }
-
-      .big {
-        font-size: 28px;
+        color: var(--muted);
         font-weight: 600;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      #chartCard canvas {
+        display: block;
+        width: 100%;
+        height: 200px;
       }
 
-      .pos {
-        color: #4ade80;
+      .cols {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 16px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      th {
+        text-align: left;
+        font-weight: 500;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 9px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      td {
+        padding: 9px 16px;
+        border-bottom: 1px solid var(--line);
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      .side {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 2px 7px;
+        border-radius: 4px;
+      }
+      .side.long {
+        color: var(--up);
+        background: rgba(63, 185, 80, 0.12);
+      }
+      .side.short {
+        color: var(--down);
+        background: rgba(248, 81, 73, 0.12);
+      }
+      .empty {
+        padding: 28px 16px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      td .x {
+        color: var(--muted);
+        cursor: pointer;
+      }
+      td .x:hover {
+        color: var(--down);
       }
 
-      .neg {
-        color: #f87171;
-      }
-
-      ul {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-        max-height: 320px;
+      .feed {
+        max-height: 420px;
         overflow: auto;
       }
-
-      li {
-        padding: 6px 0;
-        border-bottom: 1px solid #1e293b;
-        display: flex;
-        gap: 12px;
+      .ev {
+        display: grid;
+        grid-template-columns: 64px 1fr auto;
+        gap: 10px;
+        align-items: baseline;
+        padding: 7px 16px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
       }
-
-      .halt {
-        color: #fbbf24;
+      .ev time {
+        font-family: var(--mono);
+        color: #5b6573;
+        font-size: 11px;
       }
-
-      time {
-        color: #475569;
+      .ev .name {
+        font-family: var(--mono);
+      }
+      .ev.fill .name {
+        color: var(--up);
+      }
+      .ev.exit .name,
+      .ev.risk .name {
+        color: var(--warn);
+      }
+      .ev.reject .name {
+        color: var(--down);
+      }
+      @media (prefers-reduced-motion: no-preference) {
+        .ev {
+          animation: slideIn 0.25s ease;
+        }
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateY(-3px);
+          }
+          to {
+            opacity: 1;
+            transform: none;
+          }
+        }
+      }
+      @media (max-width: 860px) {
+        .kpis {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .cols {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
   <body>
     <header>
-      <h1>tradelab live</h1>
-      <span id="symbol">-</span>
-      <span id="conn">connecting...</span>
+      <span class="brand">trade<b>lab</b></span>
+      <span class="badge" id="mode">paper</span>
+      <span class="num muted" id="symbol">-</span>
+      <span class="spacer"></span>
+      <span class="pill"
+        ><span class="dot" id="connDot"></span><span id="conn">connecting</span></span
+      >
+      <button class="ctl" id="btnStop">Stop</button>
+      <button class="ctl danger" id="btnFlatten">Flatten all</button>
     </header>
-    <div class="grid">
-      <div class="card">
-        <h2>Equity</h2>
-        <div class="big" id="equity">-</div>
-        <div>Day PnL: <span id="dayPnl">-</span></div>
-      </div>
-      <div class="card">
-        <h2>Open position</h2>
-        <div id="position">flat</div>
-      </div>
-      <div class="card">
-        <h2>Risk</h2>
-        <div id="risk">-</div>
-      </div>
-      <div class="card">
-        <h2>Recent events</h2>
-        <ul id="events"></ul>
-      </div>
+
+    <div class="halt-banner" id="halt">
+      <span>&#9888;</span><span id="haltMsg">Risk halt active</span>
     </div>
+
+    <main>
+      <section class="kpis">
+        <div class="kpi">
+          <div class="label">Equity</div>
+          <div class="val" id="equity">-</div>
+          <div class="sub" id="equitySub">&nbsp;</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Day P&amp;L</div>
+          <div class="val" id="dayPnl">-</div>
+          <div class="sub" id="dayPnlPct">&nbsp;</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Open position</div>
+          <div class="val" id="posVal">flat</div>
+          <div class="sub" id="posSub">&nbsp;</div>
+        </div>
+        <div class="kpi">
+          <div class="label">Last price</div>
+          <div class="val" id="lastPrice">-</div>
+          <div class="sub" id="priceSub">&nbsp;</div>
+        </div>
+      </section>
+
+      <section class="card" id="chartCard">
+        <h2>Equity curve <span class="num muted" id="chartRange">&nbsp;</span></h2>
+        <canvas id="chart"></canvas>
+      </section>
+
+      <section class="cols">
+        <div style="display: grid; gap: 16px">
+          <div class="card">
+            <h2>Positions</h2>
+            <div id="positions"></div>
+          </div>
+          <div class="card">
+            <h2>Open orders</h2>
+            <div id="orders"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Events</h2>
+          <div class="feed" id="events"></div>
+        </div>
+      </section>
+    </main>
+
     <script>
-      const fmt = (n) =>
-        typeof n === "number" ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "-";
+      const $ = (id) => document.getElementById(id);
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const fmt = (n, d = 2) =>
+        typeof n === "number" && isFinite(n)
+          ? n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d })
+          : "-";
+      const fmtSigned = (n) => (typeof n === "number" ? (n >= 0 ? "+" : "") + fmt(n) : "-");
+
+      // smooth number tween
+      const tweens = new Map();
+      function setNum(el, value, render) {
+        if (typeof value !== "number" || !isFinite(value)) {
+          el.textContent = render(value);
+          return;
+        }
+        if (reduce) {
+          el.textContent = render(value);
+          return;
+        }
+        const from = tweens.get(el) ?? value;
+        const start = performance.now();
+        const dur = 280;
+        function frame(t) {
+          const k = Math.min(1, (t - start) / dur);
+          const eased = 1 - Math.pow(1 - k, 3);
+          const cur = from + (value - from) * eased;
+          el.textContent = render(cur);
+          if (k < 1) requestAnimationFrame(frame);
+          else tweens.set(el, value);
+        }
+        tweens.set(el, value);
+        requestAnimationFrame(frame);
+      }
+
+      // equity curve
+      const series = [];
+      let startEquity = null;
+      const canvas = $("chart");
+      const ctx = canvas.getContext("2d");
+      function drawChart() {
+        const dpr = window.devicePixelRatio || 1;
+        const w = canvas.clientWidth,
+          h = canvas.clientHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        if (series.length < 2) return;
+        const pad = 8;
+        const ys = series.map((p) => p.v);
+        let lo = Math.min(...ys),
+          hi = Math.max(...ys);
+        if (hi === lo) {
+          hi += 1;
+          lo -= 1;
+        }
+        const x = (i) => pad + (i / (series.length - 1)) * (w - pad * 2);
+        const y = (v) => h - pad - ((v - lo) / (hi - lo)) * (h - pad * 2);
+        const up = series[series.length - 1].v >= (startEquity ?? series[0].v);
+        const color = up ? "#3fb950" : "#f85149";
+        // baseline grid
+        ctx.strokeStyle = "rgba(255,255,255,0.05)";
+        ctx.lineWidth = 1;
+        for (let g = 0; g <= 3; g++) {
+          const gy = pad + (g / 3) * (h - pad * 2);
+          ctx.beginPath();
+          ctx.moveTo(pad, gy);
+          ctx.lineTo(w - pad, gy);
+          ctx.stroke();
+        }
+        // area
+        const grad = ctx.createLinearGradient(0, pad, 0, h);
+        grad.addColorStop(0, up ? "rgba(63,185,80,0.22)" : "rgba(248,81,73,0.22)");
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.beginPath();
+        ctx.moveTo(x(0), y(series[0].v));
+        series.forEach((p, i) => ctx.lineTo(x(i), y(p.v)));
+        ctx.lineTo(x(series.length - 1), h - pad);
+        ctx.lineTo(x(0), h - pad);
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+        // line
+        ctx.beginPath();
+        ctx.moveTo(x(0), y(series[0].v));
+        series.forEach((p, i) => ctx.lineTo(x(i), y(p.v)));
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.75;
+        ctx.lineJoin = "round";
+        ctx.stroke();
+        // head dot
+        const lx = x(series.length - 1),
+          ly = y(series[series.length - 1].v);
+        ctx.beginPath();
+        ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+      window.addEventListener("resize", drawChart);
+
+      function pushEquity(v, t) {
+        if (typeof v !== "number" || !isFinite(v)) return;
+        if (startEquity === null) startEquity = v;
+        series.push({ v, t: t ?? Date.now() });
+        if (series.length > 600) series.shift();
+        $("chartRange").textContent = series.length + " pts";
+        drawChart();
+      }
+
+      function rows(el, items, render, empty) {
+        if (!items || !items.length) {
+          el.innerHTML = '<div class="empty">' + empty + "</div>";
+          return;
+        }
+        el.innerHTML = "<table>" + render + "</table>";
+      }
 
       function applyState(s) {
-        document.getElementById("symbol").textContent = s.symbol ?? s.id ?? "portfolio";
-        document.getElementById("equity").textContent = fmt(s.equity);
-        const dp = document.getElementById("dayPnl");
-        dp.textContent = fmt(s.dayPnl);
-        dp.className = (s.dayPnl ?? 0) >= 0 ? "pos" : "neg";
-        const p = s.openPosition;
-        document.getElementById("position").textContent = p
-          ? `${p.side} ${fmt(p.size)} @ ${fmt(p.entryFill ?? p.entry)} | uPnL ${fmt(p.unrealizedPnl)}`
-          : "flat";
-        document.getElementById("risk").textContent = s.risk ? JSON.stringify(s.risk) : "ok";
+        $("symbol").textContent = s.symbol ?? s.id ?? "portfolio";
+        const mode = $("mode");
+        mode.textContent = s.mode ?? "paper";
+        mode.className = "badge " + (s.mode === "live" ? "live" : "paper");
+        setNum($("equity"), s.equity, (v) => fmt(v));
+        if (typeof s.equity === "number") pushEquity(s.equity, Date.now());
+        const dp = s.dayPnl ?? 0;
+        const dpEl = $("dayPnl");
+        dpEl.className = "val num " + (dp >= 0 ? "up" : "down");
+        setNum(dpEl, dp, (v) => fmtSigned(v));
+        const base = (s.equity ?? 0) - dp;
+        $("dayPnlPct").textContent = base ? fmtSigned((dp / base) * 100) + "%" : " ";
+        const p = (s.positions && s.positions[0]) || s.openPosition;
+        if (p) {
+          $("posVal").innerHTML =
+            '<span class="side ' + p.side + '">' + p.side + "</span> " + fmt(p.qty, 3);
+          $("posSub").textContent = "@ " + fmt(p.avgEntry ?? p.entryFill ?? p.entry);
+        } else {
+          $("posVal").textContent = "flat";
+          $("posSub").innerHTML = "&nbsp;";
+        }
+        setNum($("lastPrice"), s.lastPrice, (v) => fmt(v));
+        const halted = s.risk && s.risk.halted;
+        $("halt").className = "halt-banner" + (halted ? " show" : "");
+        if (halted)
+          $("haltMsg").textContent = "Risk halt active. New entries blocked for the session.";
+
+        rows(
+          $("positions"),
+          s.positions,
+          "<tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Mark</th><th>uPnL</th></tr>" +
+            (s.positions || [])
+              .map(
+                (p) =>
+                  "<tr><td>" +
+                  p.symbol +
+                  '</td><td><span class="side ' +
+                  p.side +
+                  '">' +
+                  p.side +
+                  "</span></td><td>" +
+                  fmt(p.qty, 3) +
+                  "</td><td>" +
+                  fmt(p.avgEntry ?? p.entry) +
+                  "</td><td>" +
+                  fmt(p.mark ?? p.markPrice ?? p.avgEntry) +
+                  '</td><td class="' +
+                  ((p.unrealizedPnl ?? 0) >= 0 ? "up" : "down") +
+                  '">' +
+                  fmtSigned(p.unrealizedPnl ?? 0) +
+                  "</td></tr>"
+              )
+              .join(""),
+          "No open positions"
+        );
+
+        rows(
+          $("orders"),
+          s.openOrders,
+          "<tr><th>Type</th><th>Side</th><th>Qty</th><th>Price</th><th></th></tr>" +
+            (s.openOrders || [])
+              .map(
+                (o) =>
+                  "<tr><td>" +
+                  o.type +
+                  "</td><td>" +
+                  (o.side || "") +
+                  "</td><td>" +
+                  fmt(o.qty, 3) +
+                  "</td><td>" +
+                  fmt(o.limitPrice ?? o.stopPrice ?? 0) +
+                  '</td><td><span class="x" data-cancel="' +
+                  o.orderId +
+                  '">cancel</span></td></tr>'
+              )
+              .join(""),
+          "No open orders"
+        );
       }
 
       async function pollState() {
@@ -141,34 +597,63 @@
         } catch {}
       }
 
-      pollState();
-      setInterval(pollState, 3000);
+      async function command(type, extra = {}) {
+        await fetch("/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type, ...extra }),
+        }).catch(() => {});
+        pollState();
+      }
+      $("btnFlatten").onclick = () => command("flatten");
+      $("btnStop").onclick = () => command("stop");
+      document.addEventListener("click", (e) => {
+        const id = e.target?.dataset?.cancel;
+        if (id) command("cancelOrder", { orderId: id });
+      });
 
-      const list = document.getElementById("events");
+      const evClass = (name) =>
+        name.includes("filled")
+          ? "fill"
+          : name.startsWith("risk")
+            ? "risk"
+            : name.includes("closed") || name.includes("canceled")
+              ? "exit"
+              : name.includes("reject")
+                ? "reject"
+                : "";
+      const feed = $("events");
       const es = new EventSource("/events");
-      es.onopen = () => (document.getElementById("conn").textContent = "live");
-      es.onerror = () => (document.getElementById("conn").textContent = "disconnected");
+      es.onopen = () => {
+        $("conn").textContent = "live";
+        $("connDot").className = "dot on";
+      };
+      es.onerror = () => {
+        $("conn").textContent = "disconnected";
+        $("connDot").className = "dot off";
+      };
       es.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        const li = document.createElement("li");
-        const halt = msg.event.startsWith("risk:");
-        li.innerHTML =
+        const m = JSON.parse(e.data);
+        if (m.event === "equity:update" && typeof m.payload?.equity === "number")
+          pushEquity(m.payload.equity, m.t);
+        const row = document.createElement("div");
+        row.className = "ev " + evClass(m.event);
+        row.innerHTML =
           "<time>" +
-          new Date(msg.t).toLocaleTimeString() +
-          "</time>" +
-          '<span class="' +
-          (halt ? "halt" : "") +
-          '">' +
-          msg.event +
-          "</span>" +
-          "<span>" +
-          (msg.payload?.symbol ?? "") +
+          new Date(m.t).toLocaleTimeString([], { hour12: false }) +
+          '</time><span class="name">' +
+          m.event +
+          '</span><span class="num muted">' +
+          (m.payload?.symbol ?? "") +
           "</span>";
-        list.prepend(li);
-        while (list.children.length > 100) list.removeChild(list.lastChild);
-        if (["equity:update", "position:opened", "position:closed"].includes(msg.event))
+        feed.prepend(row);
+        while (feed.children.length > 120) feed.removeChild(feed.lastChild);
+        if (["order:filled", "position:opened", "position:closed", "risk:halt"].includes(m.event))
           pollState();
       };
+
+      pollState();
+      setInterval(pollState, 3000);
     </script>
   </body>
 </html>
