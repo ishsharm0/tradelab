@@ -89,10 +89,10 @@ Start with `result.metrics` for the summary and `result.positions` for completed
 | Check overfitting risk             | `research.monteCarlo`, `research.deflatedSharpe`                                                                                        |
 | Run in paper or live mode          | `LiveEngine`, `LiveOrchestrator`, `tradelab paper`                                                                                          |
 | Trade multiple symbols in one session | `SessionManager.create({ symbols: ["BTC","ETH"] })` with per-symbol `pushBar` and `placeOrder`                                         |
-| Watch a live run locally           | `createDashboardServer({ source })` — equity curve, KPI strip, controls                                                                     |
+| Watch a live run locally           | `createDashboardServer({ source })` with equity curve, KPI strip, controls                                                                     |
 | Get notified on fills or risk halts | `attachNotifier(session, { onEvent, webhookUrl })` from `tradelab/live`                                                                    |
-| Let MCP clients run research tools | `tradelab-mcp` — `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`            |
-| Let MCP agents trade (paper/live)  | `tradelab-mcp` — `create_session`, `feed_price`, `place_order`, bracket orders, `halt_all` kill-switch (see [docs/mcp.md](docs/mcp.md))     |
+| Let MCP clients run research tools | `tradelab-mcp` with `run_backtest`, `walk_forward`, `analyze_robustness`, `optimize_strategy`, `compare_strategies`, `candle_stats`            |
+| Let MCP agents trade (paper/live)  | `tradelab-mcp` with `create_session`, `feed_price`, `place_order`, bracket orders, `halt_all` kill-switch (see [docs/mcp.md](docs/mcp.md))     |
 | Track strategy research across runs | `tradelab-mcp` with `research_open`, `research_log`, `research_recall`, `research_close` (see [docs/mcp.md](docs/mcp.md))                |
 | Summarize metrics in plain English | `summarize(metrics)` returns one plain-English paragraph                                                                                    |
 | Run a built-in preset from the CLI | `tradelab run ema-cross --source yahoo --symbol SPY --period 1y`                                                                            |

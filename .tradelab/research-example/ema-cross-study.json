@@ -1,0 +1,52 @@
+{
+  "id": "ema-cross-study",
+  "goal": "Compare fast vs slow EMA-cross on synthetic data",
+  "createdAt": "2026-06-27T16:37:03.767Z",
+  "closedAt": "2026-06-27T16:37:03.790Z",
+  "entries": [
+    {
+      "at": "2026-06-27T16:37:03.782Z",
+      "hypothesis": "EMA 5/20 rr=2",
+      "params": {
+        "fast": 5,
+        "slow": 20,
+        "rr": 2
+      },
+      "metrics": {
+        "trades": 12,
+        "winRate": 0.8333333333333334,
+        "profitFactor": 5.3566862462710665,
+        "sharpe": 1000000000,
+        "maxDrawdown": 0.0015501618971057898,
+        "returnPct": 0.013321494424246884
+      },
+      "verdict": {
+        "deflatedSharpe": 0.9999986351836303,
+        "overfit": false,
+        "note": "PSR 100.0%"
+      }
+    },
+    {
+      "at": "2026-06-27T16:37:03.789Z",
+      "hypothesis": "EMA 10/30 rr=3",
+      "params": {
+        "fast": 10,
+        "slow": 30,
+        "rr": 3
+      },
+      "metrics": {
+        "trades": 11,
+        "winRate": 0.7272727272727273,
+        "profitFactor": 1.7664201708296838,
+        "sharpe": 1000000000,
+        "maxDrawdown": 0.006100186088222965,
+        "returnPct": 0.0063056336358620685
+      },
+      "verdict": {
+        "deflatedSharpe": 0.9999961244428102,
+        "overfit": false,
+        "note": "PSR 100.0%"
+      }
+    }
+  ]
+}

@@ -141,7 +141,7 @@ Tool responses are intentionally compact. They are meant for planning and compar
 | Tool              | Args (required)                                               | Returns                              |
 | ----------------- | ------------------------------------------------------------- | ------------------------------------ |
 | `create_session`  | `sessionId`, `symbol` OR `symbols`                            | session status snapshot              |
-| `list_sessions`   | —                                                             | array of session statuses            |
+| `list_sessions`   | `(none)`                                                      | array of session statuses            |
 | `session_status`  | `sessionId`                                                   | full refresh (positions/orders/risk) |
 | `feed_price`      | `sessionId`, `bar` OR `price`, `symbol?`                      | status after fills                   |
 | `place_order`     | `sessionId`, `side`, `type?`, `qty?` OR `riskPct`+`stop`, `symbol?` | order receipt               |
@@ -152,7 +152,7 @@ Tool responses are intentionally compact. They are meant for planning and compar
 | `positions`       | `sessionId`                                                   | open positions                       |
 | `recent_events`   | `sessionId`, `limit?`                                         | event log                            |
 | `attach_strategy` | `sessionId`, `strategy`, `params?`, `symbol?`                 | `{ ok: true }`                       |
-| `halt_all`        | —                                                             | `{ ok: true, sessionsHalted: N }`    |
+| `halt_all`        | `(none)`                                                      | `{ ok: true, sessionsHalted: N }`    |
 
 ## Agent trading loop
 
