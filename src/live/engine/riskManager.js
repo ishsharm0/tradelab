@@ -139,21 +139,7 @@ export class RiskManager {
       }
     }
 
-    const grossCap = pctToFraction(this.options.maxGrossExposurePct, 0);
-    if (grossCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(grossExposure)) {
-      if (Math.abs(grossExposure) / eq > grossCap) {
-        return { ok: false, reason: "max gross exposure exceeded" };
-      }
-    }
-
-    const netCap = pctToFraction(this.options.maxNetExposurePct, 0);
-    if (netCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(netExposure)) {
-      if (Math.abs(netExposure) / eq > netCap) {
-        return { ok: false, reason: "max net exposure exceeded" };
-      }
-    }
-
-    return { ok: true, reason: null };
+    return this._checkExposureCaps({ grossExposure, netExposure, equity: eq });
   }
 
   /**
@@ -162,6 +148,16 @@ export class RiskManager {
    */
   checkExposure({ grossExposure = undefined, netExposure = undefined, equity = null } = {}) {
     const eq = Number.isFinite(equity) ? equity : this.currentEquity;
+    return this._checkExposureCaps({ grossExposure, netExposure, equity: eq });
+  }
+
+  /**
+   * Shared gross/net exposure cap logic used by canOpenPosition and checkExposure.
+   * Expects a resolved equity value (NaN/null fallback already applied by caller).
+   * Returns { ok: true, reason: null } when within caps or caps are disabled.
+   */
+  _checkExposureCaps({ grossExposure = undefined, netExposure = undefined, equity } = {}) {
+    const eq = equity;
 
     const grossCap = pctToFraction(this.options.maxGrossExposurePct, 0);
     if (grossCap > 0 && Number.isFinite(eq) && eq > 0 && Number.isFinite(grossExposure)) {
