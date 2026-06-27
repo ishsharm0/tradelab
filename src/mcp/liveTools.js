@@ -10,20 +10,6 @@ function requireSession(sessionId) {
   return s;
 }
 
-function strategyContext(session) {
-  const candles = session.candleBuffer;
-  const bar = candles[candles.length - 1] ?? null;
-  const status = session.getStatus();
-  return {
-    candles,
-    index: candles.length - 1,
-    bar,
-    equity: status.equity,
-    openPosition: status.positions[0] ?? null,
-    pendingOrder: null,
-  };
-}
-
 function signalToOrder(signal) {
   return {
     side: signal.side ?? signal.direction ?? signal.action,

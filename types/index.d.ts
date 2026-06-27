@@ -724,6 +724,36 @@ export function registerStrategy(name: string, def: StrategyDefinition): void;
 export function listStrategies(): StrategySummary[];
 export function getStrategy(name: string): StrategyDefinition["factory"];
 
+export interface ResearchEntry {
+  at: string;
+  hypothesis?: string;
+  params?: Record<string, unknown>;
+  metrics?: Record<string, unknown>;
+  verdict?: Record<string, unknown> | null;
+}
+
+export interface ResearchRecord {
+  id: string;
+  goal: string;
+  createdAt: string;
+  closedAt: string | null;
+  entries: ResearchEntry[];
+}
+
+export interface ResearchStore {
+  open(id: string, goal?: string): Promise<ResearchRecord>;
+  log(id: string, options?: {
+    hypothesis?: string;
+    params?: Record<string, unknown>;
+    metrics?: Record<string, unknown>;
+    verdict?: Record<string, unknown> | null;
+  }): Promise<ResearchEntry>;
+  recall(id: string, limit?: number): Promise<{ goal: string; entries: ResearchEntry[]; summary: string }>;
+  close(id: string): Promise<ResearchRecord>;
+}
+
+export function createResearchStore(options?: { dir?: string }): ResearchStore;
+
 export namespace research {
   function monteCarlo(options: {
     tradePnls: number[];

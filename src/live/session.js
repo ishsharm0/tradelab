@@ -84,6 +84,9 @@ export class TradingSession {
     this._strategies = new Map();     // symbol -> signalFn
     for (const sym of this.symbols) this._candleBuffers.set(sym, []);
 
+    this._wasHalted = false;
+    this._coidSeq = 0;
+
     this._wireBrokerEvents();
   }
 
@@ -242,9 +245,9 @@ export class TradingSession {
     const entryRef = type === "limit" ? limitPrice : this.lastPriceFor(sym);
     if (!Number.isFinite(entryRef)) throw new Error("no price available; pushBar() a price first");
 
+    const fraction = Number.isFinite(riskPct) ? riskPct / 100 : this.riskPct / 100;
     let size = qty;
     if (!Number.isFinite(size)) {
-      const fraction = Number.isFinite(riskPct) ? riskPct / 100 : this.riskPct / 100;
       if (!Number.isFinite(stop)) throw new Error("risk-based sizing requires a stop");
       size = calculatePositionSize({
         equity: this.equity,
@@ -259,7 +262,6 @@ export class TradingSession {
     size = roundStep(size, this.qtyStep);
     if (!(size >= this.minQty)) throw new Error(`sized below minQty (${size})`);
 
-    const fraction = Number.isFinite(riskPct) ? riskPct / 100 : this.riskPct / 100;
     const targetPx = Number.isFinite(target)
       ? target
       : Number.isFinite(rr) && Number.isFinite(stop)
@@ -283,7 +285,8 @@ export class TradingSession {
     let gross = Math.abs(sizing.notional);
     let net = newNotional;
     for (const p of positions) {
-      const pv = (p.qty ?? 0) * (p.avgPrice ?? p.entryPrice ?? entryRef);
+      const px = p.avgEntry ?? p.avgPrice ?? p.entryPrice ?? entryRef;
+      const pv = Number.isFinite(p.marketValue) ? p.marketValue : (p.qty ?? 0) * px;
       const signed = (p.side === "long" || p.side === "buy") ? pv : -pv;
       gross += Math.abs(pv);
       net += signed;
@@ -295,7 +298,7 @@ export class TradingSession {
     });
     if (!gate.ok) throw new Error(`risk rejected: ${gate.reason}`);
 
-    const entryClientOrderId = `${this.id}-entry-${Date.now()}`;
+    const entryClientOrderId = `${this.id}-entry-${Date.now()}-${++this._coidSeq}`;
     this._entryMeta.set(entryClientOrderId, { sizing, rationale });
 
     const receipt = await this.broker.submitOrder({
@@ -348,7 +351,7 @@ export class TradingSession {
     const bracket = {};
 
     if (Number.isFinite(stop)) {
-      const stopCoid = `${this.id}-stop-${Date.now()}`;
+      const stopCoid = `${this.id}-stop-${Date.now()}-${++this._coidSeq}`;
       if (parentEntryId) this._legMeta.set(stopCoid, { parentEntryId, leg: "stop" });
       const stopOrder = await this.broker.submitOrder({
         symbol: sym,
@@ -361,7 +364,7 @@ export class TradingSession {
       bracket.stopId = stopOrder.orderId;
     }
     if (Number.isFinite(targetPrice)) {
-      const tgtCoid = `${this.id}-target-${Date.now()}`;
+      const tgtCoid = `${this.id}-target-${Date.now()}-${++this._coidSeq}`;
       if (parentEntryId) this._legMeta.set(tgtCoid, { parentEntryId, leg: "target" });
       const tgtOrder = await this.broker.submitOrder({
         symbol: sym,
@@ -388,6 +391,12 @@ export class TradingSession {
     } else {
       this.riskManager.update({ timeMs: Date.now(), equity: this.equity });
     }
+    // Emit risk:halt once per halt transition
+    const nowHalted = Boolean(this.riskManager.getState?.().halted);
+    if (nowHalted && !this._wasHalted) {
+      this._record("risk:halt", { reason: this.riskManager.haltReason ?? this.riskManager.getState?.().haltReason ?? "risk halt" });
+    }
+    this._wasHalted = nowHalted;
   }
 
   async closePosition(symbol = this.symbol) {

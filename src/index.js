@@ -27,6 +27,7 @@ export {
   saveCandlesToCache,
 } from "./data/index.js";
 
+export { createResearchStore } from "./research/store.js";
 export { renderHtmlReport, exportHtmlReport } from "./reporting/renderHtmlReport.js";
 export { exportTradesCsv } from "./reporting/exportTradesCsv.js";
 export { exportMetricsJSON } from "./reporting/exportMetricsJson.js";

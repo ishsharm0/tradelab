@@ -17,6 +17,35 @@ test("notifier fires onEvent for fills", async () => {
   assert.ok(seen.includes("order:filled"), "fill should notify");
 });
 
+test("notifier fires risk:halt when daily loss limit is breached", async () => {
+  // equity 10,000; maxDailyLossPct 1% => halt triggers after losing 100
+  const mgr = new SessionManager();
+  const s = await mgr.create({ id: "n-halt", symbol: "BTC", equity: 10_000, maxDailyLossPct: 1 });
+  const haltEvents = [];
+  // attachNotifier defaults include "risk:halt"
+  const off = attachNotifier(s, { onEvent: (e) => { if (e.event === "risk:halt") haltEvents.push(e); } });
+
+  // Feed a price bar so the session has a price
+  await s.pushBar(bar(1, 100));
+  // Enter a long position at 100
+  await s.placeOrder({ side: "long", qty: 10 });
+
+  // Feed an adverse bar at price 98.9: unrealized loss = 10 * (98.9 - 100) = -11, still under 100 limit
+  await s.pushBar(bar(2, 98.9));
+  assert.equal(haltEvents.length, 0, "should not halt yet on small loss");
+
+  // Feed a bar that drops below the daily loss threshold:
+  // unrealized loss = 10 * (89 - 100) = -110, which exceeds 1% of 10,000 = 100
+  await s.pushBar(bar(3, 89));
+
+  // Allow async deliver to complete
+  await new Promise((resolve) => setImmediate(resolve));
+
+  off();
+  assert.ok(haltEvents.length >= 1, "risk:halt event should have been emitted");
+  assert.equal(haltEvents[0].event, "risk:halt");
+});
+
 test("async onEvent that rejects does not produce an unhandled rejection", async () => {
   const mgr = new SessionManager();
   const s = await mgr.create({ id: "n2", symbol: "BTC", equity: 10_000 });
