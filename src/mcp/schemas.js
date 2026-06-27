@@ -59,6 +59,53 @@ export const schemas = {
     backtestOptions: z.record(z.string(), z.any()).optional(),
   },
 
+  // Research-plus tools
+  analyze_robustness: {
+    candles: z.array(candle).optional(),
+    data: dataSpec.optional(),
+    symbol: z.string().optional(),
+    interval: z.string().optional(),
+    strategy: z.string(),
+    params: z.record(z.string(), z.any()).optional(),
+    equityStart: z.number().optional(),
+    iterations: z.number().optional(),
+    blockSize: z.number().optional(),
+    seed: z.union([z.string(), z.number()]).optional(),
+    numTrials: z.number().optional(),
+    sharpeStd: z.number().optional(),
+    skew: z.number().optional(),
+    kurtosis: z.number().optional(),
+    backtestOptions: z.record(z.string(), z.any()).optional(),
+  },
+  optimize_strategy: {
+    candles: z.array(candle).optional(),
+    data: dataSpec.optional(),
+    symbol: z.string().optional(),
+    interval: z.string().optional(),
+    strategy: z.string(),
+    grid: z.record(z.string(), z.array(z.any())).optional(),
+    scoreBy: z.string().optional(),
+    backtestOptions: z.record(z.string(), z.any()).optional(),
+  },
+  compare_strategies: {
+    candles: z.array(candle).optional(),
+    data: dataSpec.optional(),
+    symbol: z.string().optional(),
+    interval: z.string().optional(),
+    strategies: z.array(
+      z.object({
+        strategy: z.string(),
+        params: z.record(z.string(), z.any()).optional(),
+      })
+    ),
+    scoreBy: z.string().optional(),
+    backtestOptions: z.record(z.string(), z.any()).optional(),
+  },
+  candle_stats: {
+    candles: z.array(candle).optional(),
+    data: dataSpec.optional(),
+  },
+
   // Live trading tools
   create_session: {
     sessionId: z.string(),

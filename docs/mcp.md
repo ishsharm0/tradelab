@@ -13,6 +13,7 @@
 3. A broker with valid credentials must be resolvable (passed via `brokerFactory` in `SessionManager`).
 
 Every session also enforces:
+
 - `maxDailyLossPct` — if realized day PnL drops below this percentage of starting equity, all new `place_order` calls are rejected for the remainder of the day.
 - `halt_all` — an emergency kill-switch tool that flattens all positions and stops all sessions in the server process.
 
@@ -87,12 +88,16 @@ Local checkout example:
 
 ### Research tools
 
-| Tool              | Use it to                                            |
-| ----------------- | ---------------------------------------------------- |
-| `list_strategies` | See built-in strategy names and tunable parameters   |
-| `fetch_candles`   | Load Yahoo or CSV candles and return first/last bars |
-| `run_backtest`    | Run one named strategy and return compact metrics    |
-| `walk_forward`    | Run a parameter grid through walk-forward validation |
+| Tool                  | Use it to                                                             |
+| --------------------- | --------------------------------------------------------------------- |
+| `list_strategies`     | See built-in strategy names and tunable parameters                    |
+| `fetch_candles`       | Load Yahoo or CSV candles and return first/last bars                  |
+| `run_backtest`        | Run one named strategy and return compact metrics                     |
+| `walk_forward`        | Run a parameter grid through walk-forward validation                  |
+| `analyze_robustness`  | Backtest + Monte Carlo + Deflated Sharpe — validate before you trade  |
+| `optimize_strategy`   | In-process grid sweep; returns a leaderboard sorted by chosen metric  |
+| `compare_strategies`  | Run several named strategies on the same dataset, ranked head-to-head |
+| `candle_stats`        | Sanity-check candle data: count, date range, price range, interval    |
 
 Tool responses are intentionally compact. They are meant for planning and comparison, not for replacing full HTML/CSV/JSON reports from the CLI.
 
@@ -100,7 +105,7 @@ Tool responses are intentionally compact. They are meant for planning and compar
 
 | Tool              | Args (required)                                          | Returns                              |
 | ----------------- | -------------------------------------------------------- | ------------------------------------ |
-| `create_session`  | `sessionId`, `symbol`                                   | session status snapshot              |
+| `create_session`  | `sessionId`, `symbol`                                    | session status snapshot              |
 | `list_sessions`   | —                                                        | array of session statuses            |
 | `session_status`  | `sessionId`                                              | full refresh (positions/orders/risk) |
 | `feed_price`      | `sessionId`, `bar` OR `price`                            | status after fills                   |
