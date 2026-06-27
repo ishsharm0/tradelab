@@ -109,7 +109,8 @@ export const schemas = {
   // Live trading tools
   create_session: {
     sessionId: z.string(),
-    symbol: z.string(),
+    symbol: z.string().optional(),
+    symbols: z.array(z.string()).optional(),
     mode: sessionMode,
     interval: z.string().optional(),
     equity: z.number().optional(),
@@ -125,6 +126,7 @@ export const schemas = {
     sessionId: z.string(),
     bar: barShape.optional(),
     price: z.number().optional(),
+    symbol: z.string().optional(),
   },
   place_order: {
     sessionId: z.string(),
@@ -136,6 +138,7 @@ export const schemas = {
     target: z.number().optional(),
     rr: z.number().optional(),
     limitPrice: z.number().optional(),
+    symbol: z.string().optional(),
   },
   close_position: {
     sessionId: z.string(),
@@ -162,6 +165,7 @@ export const schemas = {
     sessionId: z.string(),
     strategy: z.string(),
     params: z.record(z.string(), z.any()).optional(),
+    symbol: z.string().optional(),
   },
   halt_all: {},
 };

@@ -67,3 +67,14 @@ test("live mode is refused without gating", async () => {
     })
   );
 });
+
+test("create_session accepts a symbols array and routes orders by symbol", async () => {
+  const created = await liveTools.create_session.handler({
+    sessionId: "mcp-pf", symbols: ["BTC", "ETH"], equity: 50_000,
+  });
+  assert.deepEqual(created.symbols, ["BTC", "ETH"]);
+  await liveTools.feed_price.handler({ sessionId: "mcp-pf", symbol: "BTC", price: 100 });
+  const r = await liveTools.place_order.handler({ sessionId: "mcp-pf", symbol: "BTC", side: "long", qty: 1 });
+  assert.ok(r);
+  await liveTools.halt_all.handler({});
+});

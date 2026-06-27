@@ -46,6 +46,7 @@ export const liveTools = {
     handler: async ({
       sessionId,
       symbol,
+      symbols,
       mode = "paper",
       interval = "1m",
       equity = 10_000,
@@ -56,6 +57,7 @@ export const liveTools = {
       const session = await manager.create({
         id: sessionId,
         symbol,
+        symbols,
         mode,
         interval,
         equity,
@@ -86,21 +88,36 @@ export const liveTools = {
   feed_price: {
     description:
       "Feed a price bar (or single price) to a session, advancing paper simulations and triggering fills.",
-    handler: async ({ sessionId, bar, price } = {}) => {
+    handler: async ({ sessionId, bar, price, symbol } = {}) => {
       const session = requireSession(sessionId);
       let b = bar;
       if (!b && Number.isFinite(price)) {
         b = { time: Date.now(), open: price, high: price, low: price, close: price, volume: 0 };
       }
       if (!b) throw new Error("Provide either `bar` (OHLCV) or `price` (number)");
-      await session.pushBar(b);
+      await session.pushBar(b, symbol);
 
-      // If a strategy is attached and session is flat, evaluate it
-      if (session._strategy && session.getStatus().positions.length === 0) {
+      // If a strategy is attached for this symbol and the session is flat for it, evaluate it
+      const effectiveSym = symbol ?? session.symbol;
+      const strategyFn = session._strategies.get(effectiveSym);
+      const positions = session.getStatus().positions;
+      const symPositions = positions.filter((p) => !p.symbol || p.symbol === effectiveSym);
+      if (strategyFn && symPositions.length === 0) {
         try {
-          const signal = session._strategy(strategyContext(session));
+          const candles = session.candleBufferFor(effectiveSym);
+          const bar = candles[candles.length - 1] ?? null;
+          const status = session.getStatus();
+          const ctx = {
+            candles,
+            index: candles.length - 1,
+            bar,
+            equity: status.equity,
+            openPosition: positions.find((p) => !p.symbol || p.symbol === effectiveSym) ?? null,
+            pendingOrder: null,
+          };
+          const signal = strategyFn(ctx);
           if (signal && (signal.side || signal.direction || signal.action)) {
-            await session.placeOrder(signalToOrder(signal)).catch(() => {});
+            await session.placeOrder({ ...signalToOrder(signal), symbol: effectiveSym }).catch(() => {});
           }
         } catch {
           // strategy errors are non-fatal
@@ -124,9 +141,10 @@ export const liveTools = {
       target,
       rr,
       limitPrice,
+      symbol,
     } = {}) => {
       const session = requireSession(sessionId);
-      return session.placeOrder({ side, type, qty, riskPct, stop, target, rr, limitPrice });
+      return session.placeOrder({ side, type, qty, riskPct, stop, target, rr, limitPrice, symbol });
     },
   },
 
@@ -183,11 +201,11 @@ export const liveTools = {
   attach_strategy: {
     description:
       "Attach a named built-in strategy to a session. It will auto-evaluate on each feed_price and place orders when flat.",
-    handler: async ({ sessionId, strategy, params = {} } = {}) => {
+    handler: async ({ sessionId, strategy, params = {}, symbol } = {}) => {
       const session = requireSession(sessionId);
       const factory = getStrategy(strategy);
       const signal = factory(params);
-      session._strategy = signal;
+      session._strategies.set(symbol ?? session.symbol, signal);
       return { ok: true, strategy, params };
     },
   },
