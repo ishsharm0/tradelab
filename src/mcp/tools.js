@@ -2,6 +2,7 @@ import { backtest } from "../engine/backtest.js";
 import { walkForwardOptimize } from "../engine/walkForward.js";
 import { getHistoricalCandles } from "../data/index.js";
 import { getStrategy, listStrategies } from "../strategies/index.js";
+import { liveTools } from "./liveTools.js";
 
 function summarizeMetrics(metrics) {
   const {
@@ -57,7 +58,7 @@ function expandGrid(grid) {
   );
 }
 
-export const mcpTools = {
+export const researchTools = {
   list_strategies: {
     description: "List built-in trading strategies with their tunable parameters.",
     handler: async () => ({ strategies: listStrategies() }),
@@ -140,3 +141,5 @@ export const mcpTools = {
     },
   },
 };
+
+export const mcpTools = { ...researchTools, ...liveTools };

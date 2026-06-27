@@ -1,11 +1,15 @@
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { mcpTools } from "./tools.js";
 import { schemas } from "./schemas.js";
 
+const _require = createRequire(import.meta.url);
+const { version } = _require("../../package.json");
+
 /** Build (but do not start) an McpServer with all tradelab tools registered. */
 export function createServer() {
-  const server = new McpServer({ name: "tradelab", version: "1.1.0" });
+  const server = new McpServer({ name: "tradelab", version });
 
   for (const [name, def] of Object.entries(mcpTools)) {
     server.tool(name, def.description, schemas[name] ?? {}, async (args) => {
