@@ -1,6 +1,6 @@
 # Strategy examples
 
-<small>[Back to main page](README.md)</small>
+<small>[Back to docs](README.md)</small>
 
 These are research templates. They show how to wire different kinds of data and execution assumptions into the engine without changing the output pipeline.
 
@@ -9,7 +9,7 @@ The five examples cover:
 - single-symbol price research
 - tick-level fills
 - external feature overlays
-- model-derived regime filters with walk-forward validation
+- precomputed regime filters with walk-forward validation
 - portfolio research with shared capital
 
 ---
@@ -157,7 +157,7 @@ The same pattern works for any precomputed field - regime labels, macro scores, 
 
 ## 4. Precomputed regime filter with anchored walk-forward
 
-LLM or model outputs work best as precomputed fields, not as live callers inside the signal function. Call the model once per bar outside the engine, store the result on the candle, then run a normal walk-forward on top of it.
+Regime labels work best as precomputed fields, not as slow callers inside the signal function. Build the label once per bar outside the engine, store the result on the candle, then run walk-forward validation on top of it.
 
 ```js
 import { walkForwardOptimize, getHistoricalCandles, ema } from "tradelab";
@@ -169,7 +169,7 @@ const candles = await getHistoricalCandles({
   period: "3y",
 });
 
-// call model outside the engine - keep signal() synchronous
+// build labels outside the engine - keep signal() synchronous
 const labeled = await Promise.all(
   candles.map(async (bar, index) => ({
     ...bar,
@@ -220,7 +220,7 @@ const wf = walkForwardOptimize({
 });
 ```
 
-Check `wf.bestParamsSummary` for parameter stability across windows. If the winning regime or EMA pair changes every window, the model output probably is not adding signal.
+Check `wf.bestParamsSummary` for parameter stability across windows. If the winning regime or EMA pair changes every window, the label probably is not adding durable signal.
 
 ---
 
@@ -272,4 +272,4 @@ const result = backtestPortfolio({
 
 `result.eqSeries` includes `lockedCapital` and `availableCapital` at each realized equity point. Use those to see how often the portfolio was fully deployed versus sitting partially idle.
 
-<small>[Back to main page](README.md)</small>
+<small>[Back to docs](README.md)</small>

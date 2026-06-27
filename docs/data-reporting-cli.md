@@ -1,35 +1,16 @@
-# Data, reporting, and CLI
+# Data, Reporting, and CLI
 
-<small>[Back to main page](README.md)</small>
+This guide covers data loading, local caches, report exports, and the `tradelab` command.
 
-This page covers the parts of the package around the core engine:
+[Back to docs](README.md)
 
-- historical data loading
-- local cache helpers
-- export helpers
-- command-line usage for backtest and live workflows
+## Data Loading
 
-## Overview
-
-If you are not bringing your own candles yet, start here.
-
-## Choose the right entry point
-
-| Use case                                                  | Function                 |
-| --------------------------------------------------------- | ------------------------ |
-| Load data without caring about the source-specific helper | `getHistoricalCandles()` |
-| Fetch directly from Yahoo                                 | `fetchHistorical()`      |
-| Load a local CSV file                                     | `loadCandlesFromCSV()`   |
-| Reuse saved normalized data                               | `loadCandlesFromCache()` |
-| Try the package from a terminal first                     | `tradelab` CLI           |
-
-## Historical data
-
-### `getHistoricalCandles(options)`
-
-This is the main data-loading entry point.
+Most workflows should start with `getHistoricalCandles()`.
 
 ```js
+import { getHistoricalCandles } from "tradelab";
+
 const candles = await getHistoricalCandles({
   source: "yahoo",
   symbol: "SPY",
@@ -39,98 +20,28 @@ const candles = await getHistoricalCandles({
 });
 ```
 
-### Sources
-
-- `yahoo`
-- `csv`
-- `auto`
-
-`auto` switches to CSV when `csvPath` or `csv.filePath` is present. Otherwise it uses Yahoo.
-
-If you are writing application code, prefer `getHistoricalCandles()` over calling source-specific helpers directly.
-
-### Yahoo options
-
-| Option           | Purpose                                               |
-| ---------------- | ----------------------------------------------------- |
-| `symbol`         | Ticker or Yahoo symbol                                |
-| `interval`       | Candle interval such as `1d` or `5m`                  |
-| `period`         | Lookback period such as `6mo` or `1y`                 |
-| `includePrePost` | Includes premarket and postmarket data when supported |
-| `cache`          | Reuses saved normalized data                          |
-| `refresh`        | Forces a fresh download even if cache exists          |
-| `cacheDir`       | Overrides the default cache directory                 |
-
-The Yahoo layer retries transient failures with exponential backoff. If the endpoint still fails, the error message points users toward CSV or cached data.
-
-Use caching for repeatable research runs. It reduces network noise and makes failures easier to diagnose.
-
-### CSV options
+It returns normalized candles:
 
 ```js
-const candles = await getHistoricalCandles({
-  source: "csv",
-  csvPath: "./data/spy.csv",
-  csv: {
-    timeCol: "timestamp",
-    openCol: "open",
-    highCol: "high",
-    lowCol: "low",
-    closeCol: "close",
-    volumeCol: "volume",
-  },
-});
+{
+  (time, open, high, low, close, volume);
+}
 ```
 
-CSV parsing can be configured with:
+## Sources
 
-- delimiter
-- header presence
-- column names or indexes
-- start/end date filters
-- custom date parsing
+| Source  | Use it when...                                      |
+| ------- | --------------------------------------------------- |
+| `yahoo` | You want quick market data by symbol                |
+| `csv`   | You already have a file on disk                     |
+| `auto`  | You want CSV when `csvPath` exists, otherwise Yahoo |
 
-If your CSV already uses common OHLCV column names, you often do not need to pass any mapping at all.
-
-## Cache helpers
-
-Available helpers:
-
-- `saveCandlesToCache(candles, meta)`
-- `loadCandlesFromCache(symbol, interval, period, outDir)`
-- `cachedCandlesPath(symbol, interval, period, outDir)`
-
-The cache is just normalized candle JSON on disk. It is meant for research convenience, not as a durable database layer.
-
-## Common workflows
-
-### Yahoo to backtest
+### Yahoo
 
 ```js
 const candles = await getHistoricalCandles({
   source: "yahoo",
-  symbol: "SPY",
-  interval: "1d",
-  period: "1y",
-  cache: true,
-});
-```
-
-### CSV to backtest
-
-```js
-const candles = await getHistoricalCandles({
-  source: "csv",
-  csvPath: "./data/spy.csv",
-});
-```
-
-### Cached repeat run
-
-```js
-const candles = await getHistoricalCandles({
-  source: "yahoo",
-  symbol: "SPY",
+  symbol: "QQQ",
   interval: "1d",
   period: "1y",
   cache: true,
@@ -138,60 +49,110 @@ const candles = await getHistoricalCandles({
 });
 ```
 
-## Reporting and exports
+Common options:
 
-### `exportBacktestArtifacts({ result, outDir })`
+| Option           | Meaning                                                         |
+| ---------------- | --------------------------------------------------------------- |
+| `symbol`         | Yahoo symbol                                                    |
+| `interval`       | `1m`, `5m`, `1d`, `1wk`, and other Yahoo intervals              |
+| `period`         | `5d`, `60d`, `6mo`, `1y`, `2y`, and similar                     |
+| `includePrePost` | Include premarket and postmarket candles if Yahoo provides them |
+| `cache`          | Reuse a saved normalized file                                   |
+| `refresh`        | Download again even if a cache file exists                      |
+| `cacheDir`       | Change where cache files are stored                             |
 
-The main bundle export. By default it writes:
+The Yahoo helper retries transient failures. If Yahoo is unavailable, use a cached run or switch to CSV for repeatable tests.
 
-- HTML report
-- trade CSV
-- metrics JSON
+### CSV
 
-Return value:
-
-<!-- prettier-ignore -->
 ```js
-{ csv, html, metrics }
+const candles = await getHistoricalCandles({
+  source: "csv",
+  csvPath: "./data/spy.csv",
+});
 ```
 
-If you only need one output type, call the narrower helper directly.
+If your headers use common OHLCV names, no mapping is needed. For custom files, pass column names or indexes:
 
-### `exportMetricsJSON({ result, outDir })`
+```js
+const candles = await getHistoricalCandles({
+  source: "csv",
+  csvPath: "./data/spy.csv",
+  csv: {
+    timeCol: "timestamp",
+    openCol: "open_price",
+    highCol: "high_price",
+    lowCol: "low_price",
+    closeCol: "close_price",
+    volumeCol: "volume",
+    delimiter: ",",
+  },
+});
+```
 
-Use this for dashboards, notebooks, or any machine-readable downstream pipeline.
+## Cache Helpers
 
-For automation, this is usually the best export format to build on.
+The cache is normalized candle JSON on disk. It is useful for repeatable research runs and CI fixtures. It is not a database.
 
-### `exportTradesCsv(trades, options)`
+```js
+import { saveCandlesToCache, loadCandlesFromCache, cachedCandlesPath } from "tradelab";
 
-Use this when you want a flat trade ledger for spreadsheets or pandas-style workflows.
+const path = saveCandlesToCache(candles, {
+  symbol: "SPY",
+  interval: "1d",
+  period: "1y",
+});
 
-### `renderHtmlReport(options)` and `exportHtmlReport(options)`
+const cached = loadCandlesFromCache("SPY", "1d", "1y");
+```
 
-- `renderHtmlReport()` returns an HTML string
-- `exportHtmlReport()` writes the file and returns its path
+## Reporting
 
-The report system uses the assets under `templates/`. The renderer injects the payload and keeps markup, CSS, and client script separate from the JS entrypoint.
+### Write All Artifacts
+
+```js
+import { exportBacktestArtifacts } from "tradelab";
+
+const files = exportBacktestArtifacts({
+  result,
+  outDir: "./output",
+});
+
+console.log(files);
+```
+
+Return shape:
+
+```js
+{
+  (html, csv, metrics);
+}
+```
+
+### Export Only What You Need
+
+| Helper                             | Output            |
+| ---------------------------------- | ----------------- |
+| `exportMetricsJSON(options)`       | Metrics JSON      |
+| `exportTradesCsv(trades, options)` | Flat trade ledger |
+| `renderHtmlReport(options)`        | HTML string       |
+| `exportHtmlReport(options)`        | HTML file path    |
+
+Use metrics JSON for notebooks, dashboards, or downstream jobs. Use trade CSV for spreadsheet review. Use HTML when a human needs to inspect the run.
 
 ## CLI
 
-The package ships with a `tradelab` binary.
+The package installs two binaries:
 
-The CLI is best for quick iteration, smoke tests, and trying the package before building a JS workflow around it.
+- `tradelab`
+- `tradelab-mcp`
 
-## Commands
+Use `tradelab` when you want a quick command-line run before writing application code.
 
-| Command                 | Purpose                                                                   |
-| ----------------------- | ------------------------------------------------------------------------- |
-| `tradelab backtest`     | Run a single backtest from Yahoo or CSV                                   |
-| `tradelab portfolio`    | Run a simple multi-file portfolio backtest                                |
-| `tradelab walk-forward` | Run rolling or anchored validation with built-in or local strategy search |
-| `tradelab live`         | Run live engine or orchestrator mode                                      |
-| `tradelab paper`        | Run live engine in paper broker mode                                      |
-| `tradelab status`       | Inspect persisted live namespace state                                    |
-| `tradelab prefetch`     | Download and cache Yahoo data                                             |
-| `tradelab import-csv`   | Normalize and cache a CSV file                                            |
+```bash
+tradelab --version
+tradelab help
+```
 
 ### Backtest
 
@@ -200,18 +161,16 @@ tradelab backtest --source yahoo --symbol SPY --interval 1d --period 1y
 tradelab backtest --source csv --csvPath ./data/btc.csv --strategy buy-hold --holdBars 3
 ```
 
-Built-in strategies:
+Built-in CLI strategies:
 
 - `ema-cross`
 - `buy-hold`
 
-You can also point `--strategy` at a local module. The module should export one of:
+Local strategy modules can export one of:
 
 - `default(args)`
 - `createSignal(args)`
 - `signal`
-
-That makes it easy to prototype a strategy file before wiring it into a larger application.
 
 ### Portfolio
 
@@ -222,9 +181,9 @@ tradelab portfolio \
   --strategy buy-hold
 ```
 
-This command is intentionally simple. Use it for quick combined runs, not for custom portfolio logic.
+The CLI portfolio command is intentionally compact. Use the JavaScript API when you need per-system options or custom signal wiring.
 
-### Walk-forward
+### Walk-Forward
 
 ```bash
 tradelab walk-forward \
@@ -237,9 +196,9 @@ tradelab walk-forward \
   --mode anchored
 ```
 
-The CLI walk-forward command defaults to the built-in `ema-cross` search, but `--strategy ./path/to/module.mjs` can now load a local module that exports `signalFactory(params, args)` and either `parameterSets` or `createParameterSets(args)`. Inline JSON grids are also accepted through `--parameterSets`.
+You can pass `--strategy ./strategy.mjs` for local modules that export `signalFactory(params, args)` and either `parameterSets` or `createParameterSets(args)`.
 
-### Live and paper
+### Live and Paper
 
 ```bash
 tradelab paper --symbol AAPL --interval 1m --mode polling --once true
@@ -249,36 +208,35 @@ tradelab live \
   --symbol AAPL \
   --interval 1m \
   --broker alpaca \
-  --apiKey $APCA_KEY \
-  --apiSecret $APCA_SECRET
-
-tradelab live --config ./live-portfolio.json --paper --mode polling --once true
+  --apiKey "$APCA_KEY" \
+  --apiSecret "$APCA_SECRET"
 ```
 
-For full runtime details, see [live-trading.md](live-trading.md).
+Use a config file for multi-system live runs:
 
-### Status
+```bash
+tradelab live --config ./live-portfolio.json --paper --mode polling
+```
+
+Add a dashboard:
+
+```bash
+tradelab paper --symbol AAPL --interval 1m --dashboard --dashboardPort 4317
+```
+
+### State
 
 ```bash
 tradelab status --dir ./output/live-state
-tradelab status --dir ./output/live-state --namespace my-system
+tradelab status --dir ./output/live-state --namespace aapl-1m
 ```
 
-### Cache utilities
+State commands read persisted JSON from `JsonFileStorage`; they do not connect to a broker.
 
-```bash
-tradelab prefetch --symbol SPY --interval 1d --period 1y
-tradelab import-csv --csvPath ./data/spy.csv --symbol SPY --interval 1d
-```
+## MCP Binary
 
-## Troubleshooting
+`tradelab-mcp` starts the stdio MCP server. Most users run it through an MCP client config rather than typing it directly.
 
-| Problem                | Check first                                                            |
-| ---------------------- | ---------------------------------------------------------------------- |
-| Yahoo request errors   | enable cache, retry later, or fall back to CSV                         |
-| Unexpected trade count | `warmupBars`, `flattenAtClose`, and signal frequency                   |
-| Empty result           | candle order, signal logic, and stop/target validity                   |
-| Confusing CSV import   | inspect normalized bars from `loadCandlesFromCSV()` before backtesting |
-| Export confusion       | use metrics JSON first if you need programmatic output                 |
+See [MCP server](mcp.md).
 
-<small>[Back to main page](README.md)</small>
+[Back to docs](README.md)

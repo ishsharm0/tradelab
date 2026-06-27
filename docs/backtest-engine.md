@@ -1,40 +1,28 @@
-# Backtest engine
+# Backtesting
 
-<small>[Back to main page](README.md)</small>
+This guide covers the research engine: `backtest`, `backtestAsync`, `backtestTicks`, `backtestPortfolio`, `walkForwardOptimize`, `optimize`, and `buildMetrics`.
 
-This page covers the simulation layer:
+[Back to docs](README.md)
 
-- `backtest(options)`
-- `backtestAsync(options)`
-- `backtestTicks(options)`
-- `backtestPortfolio(options)`
-- `walkForwardOptimize(options)`
-- `buildMetrics(input)`
+## Choose an Entry Point
 
-## Overview
+| Use this when...                        | Call                           |
+| --------------------------------------- | ------------------------------ |
+| You have candles for one symbol         | `backtest(options)`            |
+| Your signal returns a promise           | `backtestAsync(options)`       |
+| You have tick or quote data             | `backtestTicks(options)`       |
+| You want one result across many systems | `backtestPortfolio(options)`   |
+| You want rolling train/test validation  | `walkForwardOptimize(options)` |
+| You want a worker-pool parameter sweep  | `optimize(options)`            |
+| You already have trades and equity data | `buildMetrics(input)`          |
 
-Use the engine layer when you already have candles and want to simulate strategy behavior, inspect the result, and export or post-process it.
+## Candle Shape
 
-The same `signal()` contract is used by `LiveEngine` in `tradelab/live`, so strategy logic can move from research to execution without rewriting signal inputs.
-
-## Choose the right function
-
-| Use case                                  | Function                |
-| ----------------------------------------- | ----------------------- |
-| One strategy on one candle series         | `backtest()`            |
-| Async or model-backed candle signal       | `backtestAsync()`       |
-| One strategy on tick or quote data        | `backtestTicks()`       |
-| Multiple symbols with one combined result | `backtestPortfolio()`   |
-| Rolling or anchored train/test validation | `walkForwardOptimize()` |
-| Recompute metrics from realized trades    | `buildMetrics()`        |
-
-## Candle input
-
-Candles should be sorted in ascending time order.
+Candles should be sorted oldest to newest.
 
 ```js
 {
-  time: 1735828200000,
+  time: 1735828200000, // Unix milliseconds
   open: 100,
   high: 102,
   low: 99,
@@ -43,105 +31,94 @@ Candles should be sorted in ascending time order.
 }
 ```
 
-The package also normalizes common aliases such as `timestamp`, `date`, `o`, `h`, `l`, and `c`.
+The data loaders normalize common aliases such as `timestamp`, `date`, `o`, `h`, `l`, and `c`.
 
-## `backtest(options)`
-
-`backtest()` is the main single-symbol entry point.
-
-### Minimal example
+## First Backtest
 
 ```js
 import { backtest } from "tradelab";
 
 const result = backtest({
   candles,
-  signal({ bar, index }) {
-    if (index !== 20) return null;
+  symbol: "SPY",
+  interval: "1d",
+  equity: 10_000,
+  riskPct: 1,
+  warmupBars: 50,
+  signal({ bar, index, openPosition }) {
+    if (openPosition || index < 50) return null;
     return {
       side: "long",
-      entry: bar.close,
-      stop: bar.close - 2,
+      stop: bar.close * 0.97,
       rr: 2,
     };
   },
 });
+
+console.log(result.metrics);
 ```
 
-### Required fields
+Set these options first:
+
+| Option       | Why it matters                                |
+| ------------ | --------------------------------------------- |
+| `symbol`     | Labels results and exports                    |
+| `interval`   | Annualizes metrics correctly                  |
+| `equity`     | Starting account value                        |
+| `riskPct`    | Default risk per trade when `qty` is absent   |
+| `warmupBars` | Prevents indicators from trading before ready |
+| `costs`      | Keeps edge estimates from ignoring friction   |
+
+## Signal Contract
+
+Every engine calls your strategy with the same shape:
+
+```js
+signal({ candles, index, bar, equity, openPosition, pendingOrder });
+```
+
+Return `null` to skip the bar. Return a signal object to enter.
 
 ```js
 {
-  candles: Candle[],
-  signal: ({ candles, index, bar, equity, openPosition, pendingOrder }) => Signal | null
+  side: "long",
+  entry: 101.25,
+  stop: 99.75,
+  takeProfit: 104.25
 }
 ```
 
-### Core options
-
-| Option                             | Purpose                                                        |
-| ---------------------------------- | -------------------------------------------------------------- |
-| `symbol`, `interval`, `range`      | Labels carried into results and exports                        |
-| `equity`                           | Starting equity, default `10000`                               |
-| `riskPct` or `riskFraction`        | Default risk per trade when `qty` is not provided              |
-| `warmupBars`                       | Bars skipped before signal evaluation starts                   |
-| `flattenAtClose`                   | Forces end-of-day exit when enabled                            |
-| `collectEqSeries`, `collectReplay` | Builds extra output for charts and exports                     |
-| `strict`                           | Throws on direct lookahead access such as `candles[index + 1]` |
-| `costs`                            | Slippage, spread, and commission model                         |
-
-If you are starting from scratch, the most useful options to set explicitly are:
-
-- `equity`
-- `riskPct`
-- `warmupBars`
-- `flattenAtClose`
-- `costs`
-
-### Signal contract
-
-The signal function receives a context object with these fields:
-
-<!-- prettier-ignore -->
-```js
-{ candles, index, bar, equity, openPosition, pendingOrder }
-```
-
-Return `null` for no trade, or a signal object:
+You can omit `entry`; the engine uses the current close. You can also omit `takeProfit` when you provide `rr`.
 
 ```js
-// minimal
-{ side: "long", stop: 99.75, rr: 2 }
-
-// explicit targets
-{ side: "long", entry: 101.25, stop: 99.75, takeProfit: 104.25 }
+{ side: "short", stop: 105, rr: 2 }
 ```
 
-### Signal conveniences
+Useful signal fields:
 
-| Field                       | Behavior                                         |
-| --------------------------- | ------------------------------------------------ |
-| `side`                      | Accepts `long`, `short`, `buy`, or `sell`        |
-| `entry`                     | Defaults to the current close if omitted         |
-| `takeProfit`                | Can be derived from `rr` or `_rr`                |
-| `qty` or `size`             | Overrides risk-based sizing                      |
-| `riskPct` or `riskFraction` | Overrides the global risk setting for that trade |
+| Field                        | Meaning                           |
+| ---------------------------- | --------------------------------- |
+| `side`                       | `long`, `short`, `buy`, or `sell` |
+| `entry`, `limit`, `price`    | Entry price aliases               |
+| `stop`, `stopLoss`, `sl`     | Stop price aliases                |
+| `takeProfit`, `target`, `tp` | Target price aliases              |
+| `rr` or `_rr`                | Target in R multiples             |
+| `qty` or `size`              | Fixed position size               |
+| `riskPct` or `riskFraction`  | Per-trade risk override           |
 
-Practical rule: return the smallest signal object that expresses the trade clearly. In many strategies that is just `side`, `stop`, and `rr`.
+## Async Signals
 
-## Async signals
-
-Use `backtestAsync()` when `signal()` returns a promise, such as an LLM call, agent decision, remote service lookup, or any async feature computation.
+Use `backtestAsync()` when your signal waits on a model, service, file read, or other async work.
 
 ```js
 import { backtestAsync, LlmSignal } from "tradelab";
 
-const llm = new LlmSignal({
+const modelSignal = new LlmSignal({
   budgetMs: 2000,
   onError: "skip",
   async resolve({ candles, bar }) {
-    const recent = candles.slice(-5);
-    return recent.every((c, i) => i === 0 || c.close >= recent[i - 1].close)
+    const recent = candles.slice(-10);
+    return recent.at(-1).close > recent[0].close
       ? { side: "long", stop: bar.close * 0.98, rr: 2 }
       : null;
   },
@@ -149,48 +126,21 @@ const llm = new LlmSignal({
 
 const result = await backtestAsync({
   candles,
-  signal: llm.signal,
+  signal: modelSignal.signal,
   signalBudgetMs: 3000,
 });
 ```
 
-`backtestAsync()` returns the same result shape as `backtest()`. `signalBudgetMs` races each signal call against a per-bar deadline; set it to `0` or omit it to disable the timeout.
+`LlmSignal` caches one decision per bar, blocks lookahead access, records decisions in `log`, and can either skip or throw on errors.
 
-`LlmSignal` is an optional wrapper for model-backed decisions:
+## Costs
 
-- caches by bar time, so repeated calls for one bar reuse the same decision
-- passes a no-lookahead candle view into `resolve()`
-- enforces `budgetMs` with the same timeout primitive as `backtestAsync()`
-- records each result or error in `llm.log`
-- returns `null` on errors by default, or rethrows with `onError: "throw"`
-
-Live trading also awaits async signals; see [live trading](live-trading.md).
-
-### Optional per-trade hints
-
-These values are read from the signal object when present:
-
-- `_entryExpiryBars`
-- `_cooldownBars`
-- `_breakevenAtR`
-- `_trailAfterR`
-- `_maxBarsInTrade`
-- `_maxHoldMin`
-- `_rr`
-- `_initRisk`
-- `_imb`
-
-### Execution and cost model
-
-Legacy options still work:
-
-- `slippageBps`
-- `feeBps`
-
-For more control, use `costs`:
+The old top-level `slippageBps` and `feeBps` options still work. Prefer `costs` for new work:
 
 ```js
-{
+const result = backtest({
+  candles,
+  signal,
   costs: {
     slippageBps: 2,
     spreadBps: 1,
@@ -200,7 +150,6 @@ For more control, use `costs`:
       stop: 4,
     },
     commissionBps: 1,
-    commissionPerUnit: 0,
     commissionPerOrder: 1,
     minCommission: 1,
     carry: {
@@ -213,277 +162,174 @@ For more control, use `costs`:
       anchorMs: 0,
     },
   },
-}
-```
-
-### Cost model behavior
-
-- slippage is applied in trade direction
-- spread is modeled as half-spread paid on entry and exit
-- commission can be percentage-based, per-unit, per-order, or mixed
-- `minCommission` floors the fee for that fill
-- `carry.longAnnualBps` and `carry.shortAnnualBps` are annualized financing or borrow rates deducted when each leg closes
-- `funding.rateBps` applies once per funding boundary in `(openTime, closeTime]`; positive rates charge longs and credit shorts
-
-This is still a bar-based simulation. It does not model queue position, exchange microstructure, or realistic intrabar order priority.
-
-Closed trades expose the time-based charge as `trade.exit.financing`. It is already included in `trade.exit.pnl` and aggregate metrics, so use it only when you need attribution.
-
-### Advanced trade management
-
-These are optional. Ignore them until the strategy actually needs them.
-
-- `scaleOutAtR`, `scaleOutFrac`, `finalTP_R`
-- `maxDailyLossPct`, `dailyMaxTrades`, `postLossCooldownBars`
-- `atrTrailMult`, `atrTrailPeriod`
-- `mfeTrail`
-- `pyramiding`
-- `volScale`
-- `entryChase`
-- `qtyStep`, `minQty`, `maxLeverage`
-- `reanchorStopOnFill`, `maxSlipROnFill`
-- `oco`
-- `triggerMode`
-
-Recommended order of adoption:
-
-1. Start with `entry`, `stop`, and `rr`
-2. Add `costs`
-3. Add trailing, scale-outs, or pyramiding only if the real strategy uses them
-
-## Result shape
-
-`backtest()` returns an object with these fields:
-
-<!-- prettier-ignore -->
-```js
-{ symbol, interval, range, trades, positions, openPositions, metrics, eqSeries, replay }
-```
-
-### `trades`
-
-Every realized leg, including partial exits and scale-outs.
-
-### `positions`
-
-Completed positions only. This is the collection most users want for top-line analysis.
-
-If you are unsure whether to use `trades` or `positions`, start with `positions`.
-
-### `metrics`
-
-Most users start with:
-
-- `trades`
-- `winRate`
-- `expectancy`
-- `profitFactor`
-- `maxDrawdown`
-- `sharpe`
-- `avgHold`
-- `returnPct`
-- `totalPnL`
-- `finalEquity`
-- `sideBreakdown`
-
-Also included:
-
-- position-vs-leg variants such as `profitFactor_pos` and `profitFactor_leg`
-- `rDist` percentiles
-- `holdDistMin` percentiles
-- daily stats under `daily`
-
-Useful first checks after any run:
-
-- `metrics.trades`: enough sample size to care
-- `metrics.profitFactor`: whether winners beat losers gross of the chosen fill model
-- `metrics.maxDrawdown`: whether the path is survivable
-- `metrics.sideBreakdown`: whether one side carries the result
-
-### Risk-adjusted metrics
-
-- `sharpe` / `sortino` are per-period (daily-bucketed).
-- `sharpeAnnualized` / `sortinoAnnualized` scale by `sqrt(annualizationPeriods)`,
-  where `annualizationPeriods` is derived from `interval` (falling back to the
-  median bar spacing). Use these to compare strategies across timeframes.
-- `profitFactor`, `calmar`, and the Sharpe/Sortino family are clamped to a finite
-  `BIG_NUMBER` (1e9) so `metrics` JSON never contains `Infinity` or `NaN`.
-- `benchmark` (`{ alpha, beta, correlation, informationRatio, trackingError }`)
-  is populated when you pass `benchmarkReturns` (per-day return array aligned to
-  the strategy's daily equity buckets) to `backtest()`.
-
-### `eqSeries`
-
-Realized equity points:
-
-```js
-[{ time, timestamp, equity }];
-```
-
-`time` and `timestamp` contain the same Unix-millisecond value.
-
-### `replay`
-
-Visualization payload:
-
-```js
-{
-  frames: [{ t, price, equity, posSide, posSize }],
-  events: [{ t, price, type, side, size, tradeId, reason, pnl }]
-}
-```
-
-This is meant for charts and reports, not as a full audit log.
-
-## `backtestPortfolio(options)`
-
-Use portfolio mode when you already have one candle array per symbol and want one combined result.
-
-```js
-const result = backtestPortfolio({
-  equity: 100_000,
-  systems: [
-    { symbol: "SPY", candles: spy, signal: signalA, weight: 2 },
-    { symbol: "QQQ", candles: qqq, signal: signalB, weight: 1 },
-  ],
 });
 ```
 
-### How it works
+How the cost model works:
 
-- systems share one live capital pool
-- `weight` or `allocation: "equal" | "weight"` defines the default per-system cap, not a pre-funded sleeve
-- fills lock capital immediately, later fills size against remaining available capital
-- `eqSeries` points include `lockedCapital` and `availableCapital`
-- `maxDailyLossPct` can halt all systems for the rest of the day once breached
+- slippage is applied in the trade direction
+- spread is paid as half-spread on entry and exit
+- commission can be bps-based, per-unit, per-order, or mixed
+- `minCommission` applies per fill
+- carry is annualized and deducted when a leg closes
+- funding applies at boundaries in `(openTime, closeTime]`
+- positive funding charges longs and credits shorts
 
-### What it is not
+Closed trades include `exit.financing` when carry or funding applies. It is already included in `exit.pnl`.
 
-- a cross-margin broker simulator
-- a prime-broker margin model
-- a full portfolio optimizer
+## Result Shape
 
-This mode now does enforce shared capital and cross-system sizing, but it still uses the library's research-oriented execution assumptions rather than full broker accounting.
+```js
+{
+  (symbol,
+    interval,
+    range,
+    trades, // every realized leg
+    positions, // completed positions
+    openPositions, // still open at the end
+    metrics,
+    eqSeries,
+    replay);
+}
+```
 
-## `backtestTicks(options)`
+Use `positions` for normal trade analysis. Use `trades` when you need partial exits or scale-out legs.
 
-Use tick mode when you want event-driven fills while keeping the same result shape as `backtest()`.
+Important metrics:
+
+| Metric                 | Meaning                                                                             |
+| ---------------------- | ----------------------------------------------------------------------------------- |
+| `trades`               | Number of completed positions                                                       |
+| `winRate`              | Winning completed positions / all positions                                         |
+| `profitFactor`         | Gross profit / gross loss                                                           |
+| `totalPnL`             | Realized PnL                                                                        |
+| `returnPct`            | Return on starting equity                                                           |
+| `maxDrawdown`          | Max drawdown as a decimal                                                           |
+| `sharpeDaily`          | Daily-bucketed Sharpe                                                               |
+| `sharpeAnnualized`     | Annualized Sharpe                                                                   |
+| `annualizationPeriods` | Periods used for annualization                                                      |
+| `sideBreakdown`        | Long and short side summaries                                                       |
+| `benchmark`            | Alpha, beta, correlation, and information ratio when benchmark returns are supplied |
+
+Ratios are clamped to finite numbers before returning, so exported JSON does not contain `Infinity` or `NaN`.
+
+## Tick Backtests
+
+`backtestTicks()` uses event-style tick or quote rows:
 
 ```js
 const result = backtestTicks({
   ticks,
-  queueFillProbability: 0.5,
-  seed: "experiment-42",
+  symbol: "BTC-USD",
   signal,
+  queueFillProbability: 0.4,
+  seed: "btc-run-1",
 });
 ```
 
-### How it works
+Supported tick fields include `time`, `price`, `last`, `bid`, `ask`, `high`, `low`, `size`, and `volume`. Market entries fill on the next tick. Limit orders can fill at touch based on `queueFillProbability`. Stops use the stop-specific slippage model when provided.
 
-- market entries fill on the next tick
-- limit orders can fill at the touch based on `queueFillProbability`
-- identical `seed` + data + options produce identical probabilistic limit-fill outcomes
-- stop exits fill at the stop and use the normal stop slippage model from `costs.slippageByKind.stop`
-- results still come back as `trades`, `positions`, `metrics`, `eqSeries`, and `replay`
+Use `seed` to make probabilistic queue fills reproducible.
 
-## `walkForwardOptimize(options)`
+## Portfolio Backtests
 
-Use walk-forward mode when one in-sample backtest is not enough and you want rolling or anchored train/test validation.
+`backtestPortfolio()` runs multiple systems against one shared account.
+
+```js
+const result = backtestPortfolio({
+  equity: 100_000,
+  interval: "1d",
+  maxDailyLossPct: 3,
+  systems: [
+    { symbol: "SPY", candles: spy, signal: spySignal, weight: 2 },
+    { symbol: "QQQ", candles: qqq, signal: qqqSignal, weight: 1 },
+  ],
+});
+```
+
+Weights are default allocation caps, not pre-funded sleeves. Capital is locked when a fill happens, and later fills size against what remains available.
+
+Portfolio result extras:
+
+- `systems`: per-system backtest results
+- `eqSeries[].lockedCapital`
+- `eqSeries[].availableCapital`
+- portfolio-level `metrics`
+
+## Walk-Forward Validation
+
+Use `walkForwardOptimize()` to reduce the risk of choosing parameters that only worked in-sample.
 
 ```js
 const wf = walkForwardOptimize({
   candles,
-  mode: "anchored",
   trainBars: 180,
   testBars: 60,
   stepBars: 60,
+  mode: "anchored",
   scoreBy: "profitFactor",
-  parameterSets: [
-    { fast: 8, slow: 21, rr: 2 },
-    { fast: 10, slow: 30, rr: 2 },
-  ],
+  parameterSets,
   signalFactory(params) {
-    return createSignalFromParams(params);
+    return createSignal(params);
   },
 });
 ```
 
-### How it works
+For each window, tradelab:
 
-1. Evaluate every parameter set on the training slice
-2. Pick the best one by `scoreBy`
-3. Run that parameter set on the next test slice
-4. Repeat for each window using either rolling or anchored training windows
+1. scores every parameter set on the training slice
+2. chooses the winner
+3. runs that winner on the test slice
+4. reports aggregate metrics and winner stability
 
-### Return value
+Read `wf.windows` before trusting `wf.metrics`. A strategy that changes winners every window is less convincing than one with stable winners.
 
-- `windows`: per-window summaries and chosen parameters
-- `trades`, `positions`, `metrics`, `eqSeries`
-- `bestParams`: chosen parameters for each window plus a stability summary
-- `bestParamsSummary`: adjacent repeat rate, dominant winner, and winner leaderboard
+## Parallel Parameter Sweeps
 
-In practice, the per-window output matters more than the aggregate headline. If the winning parameters swing wildly from one window to the next, treat that as a real signal.
-
-## Optimization (parallel sweeps)
-
-Use `optimize()` for large parameter sweeps that can run independently across a worker pool.
+`optimize()` runs independent parameter sets in worker threads.
 
 ```js
-import path from "node:path";
 import { optimize, grid } from "tradelab";
 
 const out = await optimize({
   candles,
   interval: "1d",
-  signalModulePath: path.resolve("./strategies/emaSignal.js"),
-  parameterSets: grid({ fast: [5, 8, 10], slow: [20, 30, 50], rr: 2 }),
+  signalModulePath: new URL("../strategies/ema.js", import.meta.url).pathname,
+  parameterSets: grid({
+    fast: [8, 10, 12],
+    slow: [30, 50],
+  }),
   concurrency: 4,
   scoreBy: "sharpeAnnualized",
 });
-
-console.log(out.best?.params, out.best?.metrics);
 ```
 
-`signalModulePath` must point to an ESM module that exports `createSignal(params)` or a default factory:
+The strategy module should export `createSignal(params)`.
 
 ```js
 export function createSignal(params) {
   return function signal(context) {
-    return null;
+    // return null or a trade signal
   };
 }
 ```
 
-Functions cannot cross the worker boundary, so the signal is passed as a module path plus JSON-like parameter objects. Candles are copied once per worker, not once per parameter set.
+Functions cannot cross worker boundaries, so the worker receives a module path plus JSON-like parameter objects.
 
-The return shape is:
+## Recomputing Metrics
+
+Use `buildMetrics()` if you have realized trades and an equity curve from another process.
 
 ```js
-{
-  (results, // original order, one entry per parameter set
-    leaderboard, // sorted descending by scoreBy
-    best); // leaderboard[0] or null
-}
+const metrics = buildMetrics({
+  closed: trades,
+  equityStart: 10_000,
+  equityFinal: 11_250,
+  candles,
+  estBarMs: 86_400_000,
+  eqSeries,
+  interval: "1d",
+});
 ```
 
-Each result contains `{ params, metrics }` or `{ params, error }`. Worker IPC only returns compact ranking metrics, not trade logs or replay frames.
-
-`optimize()` is ESM-only in this release because it starts an ESM `worker_threads` worker via `import.meta.url`. Use it from ESM code, for example `node examples/optimize.js`.
-
-## `buildMetrics(input)`
-
-Most users do not need this directly. Use it when:
-
-- you generate realized trades outside `backtest()`
-- you filter a result and want fresh metrics
-- you combine results manually
-
-## Common mistakes
-
-- using unsorted candles or mixed intervals in one series
-- reading `trades` as if they were always full positions
-- leaving costs at zero and overestimating edge
-- trusting one backtest without out-of-sample validation
-- debugging a strategy with `strict: false` when lookahead is possible
-
-<small>[Back to main page](README.md)</small>
+[Back to docs](README.md)

@@ -132,6 +132,14 @@ export interface SideBreakdownEntry {
   avgR: number;
 }
 
+export interface BenchmarkStats {
+  alpha: number | null;
+  beta: number | null;
+  correlation: number | null;
+  informationRatio: number | null;
+  trackingError: number | null;
+}
+
 /** Aggregate performance metrics returned by `backtest()`. */
 export interface BacktestMetrics {
   /** Count of completed positions included in the aggregate metrics. */
@@ -146,6 +154,12 @@ export interface BacktestMetrics {
   avgR: number;
   /** Daily Sharpe ratio alias for quick access. */
   sharpe: number;
+  /** Annualized Sharpe ratio derived from the configured interval or bar spacing. */
+  sharpeAnnualized: number;
+  /** Annualized Sortino ratio derived from the configured interval or bar spacing. */
+  sortinoAnnualized: number;
+  /** Number of periods per year used for annualized metrics. */
+  annualizationPeriods: number;
   sharpePerTrade: number;
   sortinoPerTrade: number;
   /** Maximum drawdown percent alias. */
@@ -169,6 +183,7 @@ export interface BacktestMetrics {
   /** Daily Sharpe ratio computed from realized equity changes. */
   sharpeDaily: number;
   sortinoDaily: number;
+  benchmark: BenchmarkStats;
   /** Long/short breakdown grouped by completed position side. */
   sideBreakdown: {
     long: SideBreakdownEntry;
@@ -685,7 +700,16 @@ export function buildMetrics(input: {
   candles: Candle[];
   estBarMs: number;
   eqSeries?: EquityPoint[];
+  interval?: string;
+  benchmarkReturns?: number[];
 }): BacktestMetrics;
+export function benchmarkStats(
+  strategyReturns: number[],
+  benchmarkReturns: number[]
+): BenchmarkStats;
+export function clampFinite(value: unknown, fallback?: number): number;
+export const BIG_NUMBER: number;
+export function periodsPerYear(interval?: string, estBarMs?: number): number;
 
 export class LlmSignal {
   constructor(options: LlmSignalOptions);

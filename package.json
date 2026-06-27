@@ -45,13 +45,21 @@
       "require": "./dist/cjs/ta.cjs"
     },
     "./mcp": {
+      "types": "./types/mcp.d.ts",
       "import": "./src/mcp/server.js"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "bin",
-    "docs",
+    "docs/README.md",
+    "docs/api-reference.md",
+    "docs/backtest-engine.md",
+    "docs/data-reporting-cli.md",
+    "docs/examples.md",
+    "docs/live-trading.md",
+    "docs/mcp.md",
+    "docs/research.md",
     "dist",
     "src",
     "types",

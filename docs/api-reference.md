@@ -1,179 +1,304 @@
 # API reference
 
-<small>[Back to main page](README.md)</small>
+<small>[Back to docs](README.md)</small>
 
-This page is the compact index of public exports.
+This is the import index for the public package surface. For explanations and longer examples, start with the guides linked from [docs/README.md](README.md).
 
-If you are learning the package, start with [backtest-engine.md](backtest-engine.md) or [data-reporting-cli.md](data-reporting-cli.md). This page is for quick lookup.
+## Entry Points
 
-## Backtesting
+| Import path     | Use it for                                     |
+| --------------- | ---------------------------------------------- |
+| `tradelab`      | Backtests, data, reports, research, indicators |
+| `tradelab/data` | Data helpers only                              |
+| `tradelab/live` | Paper/live engines, broker adapters, dashboard |
+| `tradelab/ta`   | Technical indicators                           |
+| `tradelab/mcp`  | Programmatic MCP server creation               |
 
-| Export                         | Summary                                                        |
-| ------------------------------ | -------------------------------------------------------------- |
-| `backtest(options)`            | Run one strategy on one candle series                          |
-| `backtestTicks(options)`       | Run one strategy on tick or quote data                         |
-| `backtestPortfolio(options)`   | Run multiple systems through a shared-capital portfolio engine |
-| `walkForwardOptimize(options)` | Run rolling or anchored train/test validation                  |
-| `buildMetrics(input)`          | Compute metrics from realized trades and equity data           |
+CLI binaries:
 
-## Data
+| Binary         | Use it for                      |
+| -------------- | ------------------------------- |
+| `tradelab`     | Backtests, reports, live, paper |
+| `tradelab-mcp` | stdio MCP server                |
 
-| Export                                                   | Summary                                       |
-| -------------------------------------------------------- | --------------------------------------------- |
-| `getHistoricalCandles(options)`                          | Load candles from Yahoo or CSV                |
-| `backtestHistorical({ data, backtestOptions })`          | Load candles and immediately run `backtest()` |
-| `fetchHistorical(symbol, interval, period, options)`     | Call the Yahoo layer directly                 |
-| `fetchLatestCandle(symbol, interval, options)`           | Fetch the latest Yahoo candle                 |
-| `loadCandlesFromCSV(filePath, options)`                  | Parse and normalize a CSV file                |
-| `normalizeCandles(candles)`                              | Normalize candle field names and sort/dedupe  |
-| `mergeCandles(...arrays)`                                | Merge multiple candle arrays                  |
-| `candleStats(candles)`                                   | Return summary stats for a candle array       |
-| `saveCandlesToCache(candles, meta)`                      | Write normalized candles to the local cache   |
-| `loadCandlesFromCache(symbol, interval, period, outDir)` | Read normalized candles from the local cache  |
-| `cachedCandlesPath(symbol, interval, period, outDir)`    | Return the expected cache path                |
-
-## Reporting
-
-| Export                             | Summary                                    |
-| ---------------------------------- | ------------------------------------------ |
-| `renderHtmlReport(options)`        | Return the HTML report as a string         |
-| `exportHtmlReport(options)`        | Write the HTML report to disk              |
-| `exportTradesCsv(trades, options)` | Write a CSV ledger of trades or positions  |
-| `exportMetricsJSON(options)`       | Write machine-readable metrics JSON        |
-| `exportBacktestArtifacts(options)` | Write HTML, CSV, and metrics JSON together |
-
-## Live module (`tradelab/live`)
-
-Live exports are under a separate entrypoint:
+## Main Module: `tradelab`
 
 ```js
-import { LiveEngine, PaperEngine } from "tradelab/live";
+import { backtest, getHistoricalCandles, ema } from "tradelab";
 ```
 
-### Engine and orchestration
+### Backtesting
 
-- `LiveEngine`
-- `LiveOrchestrator`
-- `PaperEngine`
-- `CandleAggregator`
-- `RiskManager`
-- `StateManager`
+| Export                         | Summary                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `backtest(options)`            | Run one synchronous signal over one candle series                               |
+| `backtestAsync(options)`       | Run one async signal over one candle series                                     |
+| `backtestTicks(options)`       | Run one signal on tick-like data with tick-level fill handling                  |
+| `backtestPortfolio(options)`   | Run multiple systems through shared capital                                     |
+| `walkForwardOptimize(options)` | Run rolling or anchored train/test validation                                   |
+| `grid(spec)`                   | Expand scalar/array parameter specs into parameter sets                         |
+| `optimize(options)`            | Run parameter sets in worker threads with a strategy module                     |
+| `LlmSignal`                    | Async signal wrapper with timeout, one-decision-per-bar cache, and decision log |
 
-### Broker and feed adapters
+`backtest()` returns:
 
-- `BrokerAdapter`
-- `AlpacaBroker`
-- `BinanceBroker`
-- `CoinbaseBroker`
-- `InteractiveBrokersBroker`
-- `FeedProvider`
-- `BrokerFeed`
-- `PollingFeed`
+| Field           | Meaning                                        |
+| --------------- | ---------------------------------------------- |
+| `trades`        | Realized legs, including partial exits         |
+| `positions`     | Completed positions                            |
+| `openPositions` | Positions still open at the end of the data    |
+| `metrics`       | Aggregate performance statistics               |
+| `eqSeries`      | Realized equity points for charts and exports  |
+| `replay`        | Lightweight chart frames and entry/exit events |
 
-### Storage and runtime utilities
+### Metrics
 
-- `StorageProvider`
-- `JsonFileStorage`
-- `EventBus`
-- `LiveLogger`
-- `BrokerClock`
+| Export                  | Summary                                               |
+| ----------------------- | ----------------------------------------------------- |
+| `buildMetrics(input)`   | Compute aggregate metrics from trades/equity          |
+| `benchmarkStats(input)` | Compute benchmark comparison stats                    |
+| `periodsPerYear(value)` | Convert interval/bar spacing to annualization periods |
+| `clampFinite(value)`    | Clamp non-finite numbers for report output            |
+| `BIG_NUMBER`            | Large finite sentinel used by metrics                 |
 
-### Factories
+### Strategy Registry
 
-- `createLiveEngine(options)`
-- `createLiveOrchestrator(options)`
-- `createPaperEngine(options)`
-- `createAlpacaBroker(options)`
-- `createBinanceBroker(options)`
-- `createCoinbaseBroker(options)`
-- `createInteractiveBrokersBroker(options)`
-- `createBrokerFeed(options)`
-- `createPollingFeed(options)`
-- `createJsonFileStorage(options)`
-- `createCandleAggregator(options)`
-- `createRiskManager(options)`
-- `createStateManager(options)`
-- `createEventBus()`
-- `createLogger(options)`
-- `createClock(options)`
+| Export                        | Summary                                     |
+| ----------------------------- | ------------------------------------------- |
+| `listStrategies()`            | List built-in and registered strategy names |
+| `getStrategy(name)`           | Get a registered strategy factory           |
+| `registerStrategy(name, def)` | Register a named strategy at runtime        |
 
-## Indicators and utilities
+Strategy definitions use:
 
-### Indicators
+```js
+registerStrategy("my-strategy", {
+  description: "Readable description",
+  params: {
+    lookback: { type: "number", default: 20 },
+  },
+  factory(params) {
+    return (context) => null;
+  },
+});
+```
 
-- `ema(values, period)`
-- `atr(bars, period)`
-- `swingHigh(bars, index, left, right)`
-- `swingLow(bars, index, left, right)`
-- `detectFVG(bars, index)`
-- `lastSwing(bars, index, direction)`
-- `structureState(bars, index)`
-- `bpsOf(price, bps)`
-- `pct(a, b)`
+### Data
 
-### Position sizing
+| Export                                                   | Summary                                    |
+| -------------------------------------------------------- | ------------------------------------------ |
+| `getHistoricalCandles(options)`                          | Load candles from Yahoo or CSV             |
+| `backtestHistorical({ data, backtestOptions })`          | Load data and immediately run `backtest()` |
+| `fetchHistorical(symbol, interval, period, options)`     | Fetch Yahoo candles directly               |
+| `fetchLatestCandle(symbol, interval, options)`           | Fetch the latest Yahoo candle              |
+| `loadCandlesFromCSV(filePath, options)`                  | Parse and normalize a CSV file             |
+| `normalizeCandles(candles)`                              | Normalize field names, sort, and dedupe    |
+| `mergeCandles(...arrays)`                                | Merge candle arrays, sort, and dedupe      |
+| `candleStats(candles)`                                   | Summarize count, range, duration, interval |
+| `saveCandlesToCache(candles, meta)`                      | Write candles to the local cache           |
+| `loadCandlesFromCache(symbol, interval, period, outDir)` | Read candles from the local cache          |
+| `cachedCandlesPath(symbol, interval, period, outDir)`    | Return the expected cache path             |
 
-- `calculatePositionSize(input)`
+### Reporting
 
-### Time helpers
+| Export                             | Summary                                      |
+| ---------------------------------- | -------------------------------------------- |
+| `renderHtmlReport(options)`        | Return the HTML report as a string           |
+| `exportHtmlReport(options)`        | Write an HTML report                         |
+| `exportTradesCsv(trades, options)` | Write a trade or position CSV ledger         |
+| `exportMetricsJSON(options)`       | Write machine-readable metrics JSON          |
+| `exportBacktestArtifacts(options)` | Write HTML, CSV, and JSON artifacts together |
 
-- `offsetET(timeMs)`
-- `minutesET(timeMs)`
-- `isSession(timeMs, session)`
-- `parseWindowsCSV(csv)`
-- `inWindowsET(timeMs, windows)`
+### Research
 
-## Technical analysis (`tradelab/ta`)
+```js
+import { research } from "tradelab";
+```
 
-TA exports are under a separate entrypoint:
+| Export                                                       | Summary                                                    |
+| ------------------------------------------------------------ | ---------------------------------------------------------- |
+| `research.monteCarlo(options)`                               | Bootstrap trade PnLs into alternate equity paths           |
+| `research.deflatedSharpe(options)`                           | Penalize Sharpe for sample size, non-normality, and trials |
+| `research.sweepHaircut(options)`                             | Estimate the Sharpe hurdle from many trials                |
+| `research.probabilityOfBacktestOverfitting(matrix, options)` | Estimate PBO from a performance matrix                     |
+| `research.combinatorialPurgedSplits(options)`                | Build purged train/test splits                             |
+| `research.combinations(n, k)`                                | Generate combinations                                      |
+| `research.normalCdf(x)`                                      | Standard normal CDF                                        |
+| `research.normalPpf(p)`                                      | Standard normal inverse CDF                                |
+| `research.moments(values)`                                   | Mean, standard deviation, skew, kurtosis                   |
+
+### Indicators And Helpers
+
+| Export                                | Summary                                      |
+| ------------------------------------- | -------------------------------------------- |
+| `ema(values, period)`                 | Exponential moving average                   |
+| `atr(bars, period)`                   | Average True Range                           |
+| `swingHigh(bars, index, left, right)` | Detect a swing high at an index              |
+| `swingLow(bars, index, left, right)`  | Detect a swing low at an index               |
+| `detectFVG(bars, index)`              | Detect a Fair Value Gap                      |
+| `lastSwing(bars, index, direction)`   | Find the last swing in a direction           |
+| `structureState(bars, index)`         | Return latest swing high/low state           |
+| `bpsOf(price, bps)`                   | Convert basis points to price distance       |
+| `pct(a, b)`                           | Percent difference helper                    |
+| `calculatePositionSize(input)`        | Risk-based quantity calculation              |
+| `offsetET(timeMs)`                    | Eastern Time offset helper                   |
+| `minutesET(timeMs)`                   | Minutes since midnight Eastern Time          |
+| `isSession(timeMs, session)`          | Check known trading sessions                 |
+| `parseWindowsCSV(csv)`                | Parse windows like `09:30-11:30,13:00-15:30` |
+| `inWindowsET(timeMs, windows)`        | Check whether a timestamp is inside windows  |
+
+## Data Module: `tradelab/data`
+
+```js
+import { getHistoricalCandles, loadCandlesFromCSV } from "tradelab/data";
+```
+
+This entry point exports the data helpers from the main module:
+
+- `getHistoricalCandles`
+- `backtestHistorical`
+- `fetchHistorical`
+- `fetchLatestCandle`
+- `loadCandlesFromCSV`
+- `normalizeCandles`
+- `mergeCandles`
+- `candleStats`
+- `saveCandlesToCache`
+- `loadCandlesFromCache`
+- `cachedCandlesPath`
+
+## Live Module: `tradelab/live`
+
+```js
+import { LiveEngine, PaperEngine, createDashboardServer } from "tradelab/live";
+```
+
+### Engines
+
+| Export                            | Summary                                      |
+| --------------------------------- | -------------------------------------------- |
+| `LiveEngine`                      | Single-system live or paper execution engine |
+| `createLiveEngine(options)`       | Factory for `LiveEngine`                     |
+| `LiveOrchestrator`                | Multi-system engine sharing one broker       |
+| `createLiveOrchestrator(options)` | Factory for `LiveOrchestrator`               |
+| `PaperEngine`                     | In-process broker simulator                  |
+| `createPaperEngine(options)`      | Factory for `PaperEngine`                    |
+
+### Broker Adapters
+
+| Export                                                        | Summary                                 |
+| ------------------------------------------------------------- | --------------------------------------- |
+| `BrokerAdapter`                                               | Base broker interface                   |
+| `AlpacaBroker` / `createAlpacaBroker`                         | Alpaca adapter and factory              |
+| `BinanceBroker` / `createBinanceBroker`                       | Binance adapter and factory             |
+| `CoinbaseBroker` / `createCoinbaseBroker`                     | Coinbase adapter and factory            |
+| `InteractiveBrokersBroker` / `createInteractiveBrokersBroker` | Interactive Brokers adapter and factory |
+
+### Feeds
+
+| Export                            | Summary                                     |
+| --------------------------------- | ------------------------------------------- |
+| `FeedProvider`                    | Base feed interface                         |
+| `BrokerFeed`                      | Feed backed by broker subscriptions         |
+| `createBrokerFeed(options)`       | Factory for `BrokerFeed`                    |
+| `PollingFeed`                     | Polling feed backed by broker history calls |
+| `createPollingFeed(options)`      | Factory for `PollingFeed`                   |
+| `CandleAggregator`                | Aggregate ticks/polled bars into candles    |
+| `createCandleAggregator(options)` | Factory for `CandleAggregator`              |
+
+### State, Risk, Events
+
+| Export                           | Summary                                           |
+| -------------------------------- | ------------------------------------------------- |
+| `StorageProvider`                | Base persistence interface                        |
+| `JsonFileStorage`                | JSON/JSONL file storage                           |
+| `createJsonFileStorage(options)` | Factory for `JsonFileStorage`                     |
+| `StateManager`                   | Load, save, append, and reconcile state           |
+| `createStateManager(options)`    | Factory for `StateManager`                        |
+| `RiskManager`                    | Daily loss, drawdown, session, and position gates |
+| `createRiskManager(options)`     | Factory for `RiskManager`                         |
+| `EventBus`                       | Event emitter with `emitEvent()` and `onAny()`    |
+| `LIVE_EVENTS`                    | Named live event constants                        |
+| `createEventBus()`               | Factory for `EventBus`                            |
+| `LiveLogger`                     | Structured event logger                           |
+| `createLogger(options)`          | Factory for `LiveLogger`                          |
+| `BrokerClock`                    | Broker/local clock offset helper                  |
+| `createClock(options)`           | Factory for `BrokerClock`                         |
+
+### Dashboard
+
+| Export                           | Summary                                                |
+| -------------------------------- | ------------------------------------------------------ |
+| `createDashboardServer(options)` | Local HTTP dashboard for an engine/orchestrator source |
+
+The dashboard source must expose `eventBus` and may expose `getStatus()`.
+
+## Technical Analysis Module: `tradelab/ta`
 
 ```js
 import { rsi, macd, bollinger, vwap, supertrend } from "tradelab/ta";
 ```
 
-Every indicator returns a **full-length array aligned to the input** — warmup positions are `undefined` so values index 1:1 with candles. Oscillators accept a `number[]` of closes; range-based indicators accept `{ high, low, close }` candle arrays.
+TA functions return arrays aligned to the input. Warmup positions are `undefined` where a value cannot be computed yet.
+
+### Re-exported Core Indicators
+
+| Export                                  | Input      | Returns                    |
+| --------------------------------------- | ---------- | -------------------------- |
+| `ema(values, period?)`                  | `number[]` | `number[]`                 |
+| `atr(bars, period?)`                    | candles    | `(number \| undefined)[]`  |
+| `swingHigh(bars, index, left?, right?)` | candles    | `boolean`                  |
+| `swingLow(bars, index, left?, right?)`  | candles    | `boolean`                  |
+| `detectFVG(bars, index)`                | candles    | gap object or `null`       |
+| `lastSwing(bars, index, direction)`     | candles    | `{ idx, price }` or `null` |
+| `structureState(bars, index)`           | candles    | latest swing state         |
 
 ### Oscillators
 
-| Export                                      | Input        | Returns                       | Description                                              |
-| ------------------------------------------- | ------------ | ----------------------------- | -------------------------------------------------------- |
-| `rsi(closes, period?)`                      | `number[]`   | `(number \| undefined)[]`     | Wilder's RSI; warmup positions are `undefined`           |
-| `macd(closes, fast?, slow?, signalPeriod?)` | `number[]`   | `{ macd, signal, histogram }` | MACD line, signal line, and histogram; all full-length   |
-| `stochastic(bars, kPeriod?, dPeriod?)`      | candle array | `{ k, d }`                    | Stochastic %K and %D; `k` and `d` are full-length arrays |
+| Export                                      | Input      | Returns                       |
+| ------------------------------------------- | ---------- | ----------------------------- |
+| `rsi(closes, period?)`                      | `number[]` | `(number \| undefined)[]`     |
+| `macd(closes, fast?, slow?, signalPeriod?)` | `number[]` | `{ macd, signal, histogram }` |
+| `stochastic(bars, kPeriod?, dPeriod?)`      | candles    | `{ k, d }`                    |
 
-### Bands & channels
+### Bands And Channels
 
-| Export                                         | Input        | Returns                    | Description                                                   |
-| ---------------------------------------------- | ------------ | -------------------------- | ------------------------------------------------------------- |
-| `bollinger(closes, period?, mult?)`            | `number[]`   | `{ middle, upper, lower }` | Bollinger Bands with SMA middle and stddev-scaled outer bands |
-| `donchian(bars, period?)`                      | candle array | `{ upper, lower, middle }` | Donchian channel: rolling highest-high / lowest-low           |
-| `keltner(bars, emaPeriod?, atrPeriod?, mult?)` | candle array | `{ upper, lower, middle }` | Keltner channel: EMA middle with ATR-scaled width             |
+| Export                                         | Input      | Returns                    |
+| ---------------------------------------------- | ---------- | -------------------------- |
+| `bollinger(closes, period?, mult?)`            | `number[]` | `{ middle, upper, lower }` |
+| `donchian(bars, period?)`                      | candles    | `{ upper, lower, middle }` |
+| `keltner(bars, emaPeriod?, atrPeriod?, mult?)` | candles    | `{ upper, lower, middle }` |
 
-### Trend & volume
+### Trend And Volume
 
-| Export                             | Input                                 | Returns                   | Description                                                                |
-| ---------------------------------- | ------------------------------------- | ------------------------- | -------------------------------------------------------------------------- |
-| `supertrend(bars, period?, mult?)` | candle array                          | `{ line, direction }`     | Supertrend support/resistance line; `direction` is `1` (up) or `-1` (down) |
-| `vwap(bars)`                       | candle array with `time` and `volume` | `(number \| undefined)[]` | Session VWAP, resets on each UTC calendar day                              |
+| Export                             | Input   | Returns                   |
+| ---------------------------------- | ------- | ------------------------- |
+| `supertrend(bars, period?, mult?)` | candles | `{ line, direction }`     |
+| `vwap(bars)`                       | candles | `(number \| undefined)[]` |
 
-### Re-exported from main module
+## MCP Module: `tradelab/mcp`
 
-| Export                                  | Description                        |
-| --------------------------------------- | ---------------------------------- |
-| `ema(values, period?)`                  | Exponential moving average         |
-| `atr(bars, period?)`                    | Average True Range                 |
-| `swingHigh(bars, index, left?, right?)` | Detect swing high at index         |
-| `swingLow(bars, index, left?, right?)`  | Detect swing low at index          |
-| `detectFVG(bars, index)`                | Detect Fair Value Gap at index     |
-| `lastSwing(bars, index, direction)`     | Find the last swing in a direction |
-| `structureState(bars, index)`           | Assess market structure state      |
+```js
+import { createServer, startStdioServer } from "tradelab/mcp";
+```
+
+| Export               | Summary                                 |
+| -------------------- | --------------------------------------- |
+| `createServer()`     | Build an MCP server with tradelab tools |
+| `startStdioServer()` | Start the MCP server on stdio           |
+
+See [mcp.md](mcp.md) for client configuration and tool payload examples.
 
 ## Types
 
-The package ships declarations in:
+The package ships TypeScript declarations:
 
-- [../types/index.d.ts](../types/index.d.ts) for the main module
-- [../types/live.d.ts](../types/live.d.ts) for `tradelab/live`
-- [../types/ta.d.ts](../types/ta.d.ts) for `tradelab/ta`
+| File               | Covers          |
+| ------------------ | --------------- |
+| `types/index.d.ts` | `tradelab`      |
+| `types/data.d.ts`  | `tradelab/data` |
+| `types/live.d.ts`  | `tradelab/live` |
+| `types/ta.d.ts`    | `tradelab/ta`   |
+| `types/mcp.d.ts`   | `tradelab/mcp`  |
 
-<small>[Back to main page](README.md)</small>
+<small>[Back to docs](README.md)</small>

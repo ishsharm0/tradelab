@@ -1,31 +1,37 @@
 # MCP server
 
-<small>[Back to main page](README.md)</small>
+<small>[Back to docs](README.md)</small>
 
-`tradelab-mcp` exposes the research loop to MCP-capable agents such as Claude Desktop, Cursor, and Claude Code.
+`tradelab-mcp` exposes a small research API over the Model Context Protocol. Use it from MCP clients when you want to list built-in strategies, fetch candles, run compact backtests, or run walk-forward checks without writing glue code.
 
-## Tools
+The server runs over stdio. It does not start an HTTP port.
 
-| Tool              | Purpose                                                                 |
-| ----------------- | ----------------------------------------------------------------------- |
-| `list_strategies` | List built-in strategies and their tunable parameters                   |
-| `fetch_candles`   | Fetch Yahoo or CSV candles and return a compact first/last bar summary  |
-| `run_backtest`    | Run a named strategy with JSON params and return compact metrics        |
-| `walk_forward`    | Run a named strategy over a parameter grid and return stability metrics |
+## Install
 
-Tool outputs are summaries for agent context, not full report payloads. `run_backtest` returns metrics and a small trade preview, but not replay frames.
+Use the published package:
 
-## Agent research loop
+```bash
+npx -y tradelab tradelab-mcp
+```
 
-1. Call `list_strategies` to inspect available strategy names and parameters.
-2. Call `fetch_candles` or provide inline `candles`.
-3. Call `run_backtest` with a strategy name and params.
-4. Read `metrics`, especially trade count, profit factor, drawdown, and annualized Sharpe.
-5. Call `walk_forward` with a parameter grid to check out-of-sample stability.
+Or install globally:
 
-## Claude Desktop config
+```bash
+npm install -g tradelab
+tradelab-mcp
+```
 
-Use this with the published package:
+From a local checkout:
+
+```bash
+npm install
+npm run build
+node bin/tradelab-mcp.js
+```
+
+## MCP Client Config
+
+Claude Desktop example:
 
 ```json
 {
@@ -38,7 +44,7 @@ Use this with the published package:
 }
 ```
 
-After installing globally with `npm install -g tradelab`, you can use:
+Global install example:
 
 ```json
 {
@@ -50,15 +56,179 @@ After installing globally with `npm install -g tradelab`, you can use:
 }
 ```
 
-## Strategies
+Local checkout example:
 
-Agents cannot pass JavaScript closures over MCP, so strategies are name-addressable. Built-ins currently include:
+```json
+{
+  "mcpServers": {
+    "tradelab": {
+      "command": "node",
+      "args": ["/absolute/path/to/tradelab/bin/tradelab-mcp.js"]
+    }
+  }
+}
+```
+
+## Tools
+
+| Tool              | Use it to                                            |
+| ----------------- | ---------------------------------------------------- |
+| `list_strategies` | See built-in strategy names and tunable parameters   |
+| `fetch_candles`   | Load Yahoo or CSV candles and return first/last bars |
+| `run_backtest`    | Run one named strategy and return compact metrics    |
+| `walk_forward`    | Run a parameter grid through walk-forward validation |
+
+Tool responses are intentionally compact. They are meant for planning and comparison, not for replacing full HTML/CSV/JSON reports from the CLI.
+
+## Typical Research Flow
+
+1. Call `list_strategies`.
+2. Choose a built-in strategy such as `ema-cross`, `rsi-reversion`, `donchian-breakout`, or `buy-hold`.
+3. Call `fetch_candles` for a quick data sanity check, or pass a `data` object directly to `run_backtest`.
+4. Call `run_backtest` with `strategy`, `params`, and either `candles` or `data`.
+5. Inspect trade count, profit factor, drawdown, return, and Sharpe fields.
+6. Call `walk_forward` with a grid to see whether parameters hold up out of sample.
+
+## Example Calls
+
+Fetch candles:
+
+```json
+{
+  "source": "yahoo",
+  "symbol": "SPY",
+  "interval": "1d",
+  "period": "1y",
+  "cache": true
+}
+```
+
+Run a backtest:
+
+```json
+{
+  "data": {
+    "source": "yahoo",
+    "symbol": "SPY",
+    "interval": "1d",
+    "period": "2y",
+    "cache": true
+  },
+  "symbol": "SPY",
+  "interval": "1d",
+  "strategy": "ema-cross",
+  "params": {
+    "fast": 10,
+    "slow": 30,
+    "rr": 2
+  },
+  "backtestOptions": {
+    "warmupBars": 40,
+    "riskPct": 1,
+    "collectReplay": false
+  }
+}
+```
+
+Run walk-forward validation:
+
+```json
+{
+  "data": {
+    "source": "yahoo",
+    "symbol": "QQQ",
+    "interval": "1d",
+    "period": "3y"
+  },
+  "interval": "1d",
+  "strategy": "ema-cross",
+  "trainBars": 180,
+  "testBars": 60,
+  "mode": "anchored",
+  "scoreBy": "profitFactor",
+  "grid": {
+    "fast": [8, 10, 12],
+    "slow": [30, 40, 50],
+    "rr": [1.5, 2, 3]
+  },
+  "backtestOptions": {
+    "warmupBars": 60,
+    "riskPct": 1
+  }
+}
+```
+
+## Strategy Names
+
+MCP calls cannot pass JavaScript functions, so strategies are selected by name.
+
+Built-ins:
 
 - `ema-cross`
 - `rsi-reversion`
 - `donchian-breakout`
 - `buy-hold`
 
-Register custom strategies in application code with `registerStrategy(name, def)` from the main package. A strategy definition includes `description`, `params`, and a `factory(params)` function that returns a normal tradelab `signal(context)`.
+In application code, register custom strategies with `registerStrategy(name, definition)`:
 
-<small>[Back to main page](README.md)</small>
+```js
+import { registerStrategy } from "tradelab";
+
+registerStrategy("my-breakout", {
+  description: "Simple close-over-high breakout",
+  params: {
+    lookback: { type: "number", default: 20 },
+    rr: { type: "number", default: 2 },
+  },
+  factory(params) {
+    return ({ candles, bar }) => {
+      if (candles.length < params.lookback + 1) return null;
+
+      const recent = candles.slice(-params.lookback - 1, -1);
+      const high = Math.max(...recent.map((candle) => candle.high));
+
+      if (bar.close <= high) return null;
+
+      return {
+        side: "long",
+        entry: bar.close,
+        stop: Math.min(...recent.map((candle) => candle.low)),
+        rr: params.rr,
+      };
+    };
+  },
+});
+```
+
+The packaged `tradelab-mcp` server only knows strategies registered in the package process. For project-specific strategies, create a small wrapper server that imports your registrations before calling `createServer()` from `tradelab/mcp`.
+
+```js
+// mcp-server.js
+import "./strategies/register.js";
+import { startStdioServer } from "tradelab/mcp";
+
+await startStdioServer();
+```
+
+## Public Server API
+
+```js
+import { createServer, startStdioServer } from "tradelab/mcp";
+```
+
+| Export               | Purpose                                       |
+| -------------------- | --------------------------------------------- |
+| `createServer()`     | Build an `McpServer` with tradelab tools      |
+| `startStdioServer()` | Create the server and connect stdio transport |
+
+## Troubleshooting
+
+| Symptom                         | Check                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| Client says server disconnected | The command must stay running and write protocol messages only to stdio |
+| `npx` starts slowly             | Install globally or point the client at a local checkout                |
+| Yahoo fetch fails               | Try a shorter `period`, set `cache: false`, or use CSV data             |
+| No trades                       | Verify candle count, `warmupBars`, params, and stop placement           |
+| Custom strategy not found       | Register it in the same Node process that starts the MCP server         |
+
+<small>[Back to docs](README.md)</small>

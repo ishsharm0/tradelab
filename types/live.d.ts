@@ -84,6 +84,8 @@ export interface StoredState {
   savedAt: number;
 }
 
+export const LIVE_EVENTS: string[];
+
 export class EventBus extends import("node:events").EventEmitter {
   emitEvent(event: string, payload?: Record<string, unknown>): true;
   onAny(handler: (input: { event: string; payload: Record<string, unknown> }) => void): () => void;

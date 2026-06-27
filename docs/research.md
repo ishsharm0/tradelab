@@ -1,35 +1,32 @@
-# Research & overfitting
+# Research checks
 
-<small>[Back to main page](README.md)</small>
+<small>[Back to docs](README.md)</small>
 
-The `research` namespace contains pure statistical helpers for checking whether a backtest is robust enough to take seriously.
+The `research` namespace contains statistical checks for the part of trading research that usually fails quietly: too many trials, too few trades, unstable winners, and lucky trade order.
 
 ```js
 import { backtest, research } from "tradelab";
 
 const result = backtest({ candles, interval: "1d", signal });
-const pnls = result.positions.map((p) => p.exit.pnl);
+const tradePnls = result.positions.map((position) => position.exit.pnl);
 
-const mc = research.monteCarlo({ tradePnls: pnls, equityStart: 10_000, seed: 1 });
-console.log("5% worst final equity:", mc.finalEquity.p5);
-
-const dsr = research.deflatedSharpe({
-  sharpe: result.metrics.sharpeDaily,
-  sampleSize: result.metrics.trades,
-  numTrials: 20,
-  sharpeStd: 0.5,
-  skew: 0,
-  kurtosis: 3,
+const mc = research.monteCarlo({
+  tradePnls,
+  equityStart: 10_000,
+  seed: "spy-ema-v1",
 });
-console.log("Deflated Sharpe prob:", dsr);
+
+console.log(mc.finalEquity.p5);
 ```
 
-## `research.monteCarlo(options)`
+Use these helpers after a backtest or parameter sweep. They do not fetch data or run the strategy for you.
 
-Seeded block-bootstrap of trade PnLs.
+## Monte Carlo
+
+`research.monteCarlo(options)` bootstraps completed trade PnLs into many alternate equity paths.
 
 ```js
-research.monteCarlo({
+const simulation = research.monteCarlo({
   tradePnls,
   equityStart: 10_000,
   iterations: 1000,
@@ -40,54 +37,79 @@ research.monteCarlo({
 
 Returns:
 
-- `finalEquity`: `{ p5, p25, p50, p75, p95 }`
-- `maxDrawdown`: `{ p5, p25, p50, p75, p95 }`
-- `pathBands`: per-trade-step `{ p5, p50, p95 }` equity bands
-- `probProfit`: fraction of simulations ending above starting equity
+| Field         | Meaning                                                       |
+| ------------- | ------------------------------------------------------------- |
+| `finalEquity` | Percentiles of final equity: `p5`, `p25`, `p50`, `p75`, `p95` |
+| `maxDrawdown` | Percentiles of maximum drawdown across simulations            |
+| `pathBands`   | Per-trade-step equity bands for charting                      |
+| `probProfit`  | Fraction of simulations ending above starting equity          |
 
-Use `blockSize > 1` when you want to preserve short streaks in the resampled trade sequence.
+Use `blockSize > 1` when you want to preserve short streaks in the realized trade sequence.
 
-## `research.deflatedSharpe(options)`
+## Deflated Sharpe
 
-Returns a probability in `[0, 1]` that the observed Sharpe is real after accounting for finite sample size, non-normality, and multiple trials.
+`research.deflatedSharpe(options)` estimates how convincing an observed Sharpe is after accounting for finite sample size, non-normal returns, and multiple trials.
 
 ```js
-research.deflatedSharpe({
-  sharpe,
-  sampleSize,
-  numTrials,
-  sharpeStd,
-  skew,
-  kurtosis,
+const probability = research.deflatedSharpe({
+  sharpe: result.metrics.sharpeDaily,
+  sampleSize: result.metrics.trades,
+  numTrials: 20,
+  sharpeStd: 0.5,
+  skew: 0,
+  kurtosis: 3,
 });
 ```
 
-Below roughly `0.95`, treat the Sharpe as not convincingly significant.
+Interpretation:
 
-## `research.sweepHaircut(options)`
+| Value           | Practical read                                   |
+| --------------- | ------------------------------------------------ |
+| `< 0.8`         | Weak evidence. Treat the result as exploratory   |
+| `0.8` to `0.95` | Interesting, but not enough on its own           |
+| `> 0.95`        | Stronger evidence, assuming inputs are realistic |
 
-Estimates the expected maximum Sharpe under the null when trying many strategy variants.
+This is not a guarantee that a strategy will work live. It is a way to penalize easy-to-overfit research.
+
+## Sweep Haircut
+
+`research.sweepHaircut(options)` estimates the Sharpe hurdle created by trying many variants.
 
 ```js
-research.sweepHaircut({ numTrials: 50, sharpeStd: 0.4 });
+const haircut = research.sweepHaircut({
+  numTrials: 50,
+  sharpeStd: 0.4,
+});
+
+console.log(haircut.expectedMaxSharpe);
 ```
 
-Use `expectedMaxSharpe` as the multiple-testing hurdle your selected strategy should clear.
+Use `expectedMaxSharpe` as a rough threshold: if your selected strategy barely clears what random searching could have produced, keep testing before trusting it.
 
-## `research.probabilityOfBacktestOverfitting(matrix, options)`
+## Probability Of Backtest Overfitting
 
-CSCV estimate of Probability of Backtest Overfitting.
+`research.probabilityOfBacktestOverfitting(matrix, options)` estimates PBO with combinatorially symmetric cross-validation.
 
 ```js
 const matrix = parameterSets.map((params) => returnsForParams(params));
-const pbo = research.probabilityOfBacktestOverfitting(matrix, { groups: 8 });
+
+const pbo = research.probabilityOfBacktestOverfitting(matrix, {
+  groups: 8,
+});
 ```
 
-Rows are strategy variants or parameter sets. Columns are per-period returns. `pbo > 0.5` means the selection process is likely overfit; lower is better.
+Input shape:
 
-## `research.combinatorialPurgedSplits(options)`
+| Dimension | Meaning                             |
+| --------- | ----------------------------------- |
+| Rows      | Strategy variants or parameter sets |
+| Columns   | Comparable per-period returns       |
 
-Creates CPCV train/test index splits with optional embargo.
+`pbo > 0.5` means the selection process is likely overfit. Lower is better.
+
+## Purged Splits
+
+`research.combinatorialPurgedSplits(options)` creates train/test index splits with optional embargo.
 
 ```js
 const splits = research.combinatorialPurgedSplits({
@@ -98,6 +120,38 @@ const splits = research.combinatorialPurgedSplits({
 });
 ```
 
-Each split is `{ train, test, testGroups }`. Training observations near test blocks are purged by `embargo` observations to reduce leakage from overlapping or serially correlated samples.
+Each split is:
 
-<small>[Back to main page](README.md)</small>
+```js
+{
+  train: [0, 1, 2],
+  test: [30, 31, 32],
+  testGroups: [2, 3]
+}
+```
+
+Use an embargo when labels, indicators, or trade outcomes overlap nearby observations. It keeps training rows too close to the test block out of the training set.
+
+## Low-Level Stats
+
+These are exported for advanced research code:
+
+| Export                             | Purpose                        |
+| ---------------------------------- | ------------------------------ |
+| `research.combinations(values, k)` | Generate k-combinations        |
+| `research.normalCdf(x)`            | Standard normal CDF            |
+| `research.normalPpf(p)`            | Standard normal inverse CDF    |
+| `research.moments(values)`         | Mean, variance, skew, kurtosis |
+
+## A Practical Gate
+
+For a strategy you might run live, combine several checks:
+
+1. Backtest on realistic costs and slippage.
+2. Run walk-forward validation with `walkForwardOptimize()`.
+3. Check parameter stability in `bestParamsSummary`.
+4. Run Monte Carlo on completed trade PnLs.
+5. Penalize multiple trials with deflated Sharpe or sweep haircut.
+6. Re-run on a later untouched data period before using live credentials.
+
+<small>[Back to docs](README.md)</small>

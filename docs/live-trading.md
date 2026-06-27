@@ -1,54 +1,42 @@
-# Live trading
+# Live and paper trading
 
-<small>[Back to main page](README.md)</small>
+<small>[Back to docs](README.md)</small>
 
-This guide covers the `tradelab/live` module and the live CLI commands.
+Use `tradelab/live` when you want the same strategy contract from `backtest()` to run against a paper broker or a broker adapter.
 
-## Overview
+The live module is intentionally small:
 
-The live stack is built to reuse the same signal contract as backtesting:
-
-- write and validate `signal()` with `backtest()`
-- run the same signal in `LiveEngine` or `LiveOrchestrator`
-- choose a real broker adapter or `PaperEngine`
-- persist state with `JsonFileStorage` for restart safety
-
-Import path:
+- a signal receives finalized candles and returns the same order intent used in backtests
+- a broker adapter handles account, order, fill, and position operations
+- a feed provides bars or ticks
+- storage persists state so a process restart can recover cleanly
+- risk controls can block new orders or halt a system
 
 ```js
-import { LiveEngine, LiveOrchestrator, PaperEngine } from "tradelab/live";
+import { LiveEngine, PaperEngine, JsonFileStorage } from "tradelab/live";
 ```
 
-## Module components
-
-| Component                                                                        | Purpose                                                              |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `LiveEngine`                                                                     | Single-system live or paper execution loop                           |
-| `LiveOrchestrator`                                                               | Multi-system live execution with shared broker and aggregated status |
-| `PaperEngine`                                                                    | In-process broker simulator implementing the broker adapter contract |
-| `AlpacaBroker` / `BinanceBroker` / `CoinbaseBroker` / `InteractiveBrokersBroker` | Real broker adapters                                                 |
-| `BrokerFeed` / `PollingFeed`                                                     | Feed adapters for streaming or polling operation                     |
-| `RiskManager`                                                                    | Session windows, daily loss gates, drawdown halts, position checks   |
-| `StateManager` / `JsonFileStorage`                                               | Persisted state, trades, and equity curve                            |
-| `EventBus` / `LiveLogger`                                                        | Event fanout and structured logging                                  |
-
-## `LiveEngine` quick start
+## Start With Paper Mode
 
 ```js
 import { LiveEngine, PaperEngine, JsonFileStorage } from "tradelab/live";
 
+const broker = new PaperEngine({ equity: 25_000 });
+
 const engine = new LiveEngine({
-  id: "aapl-1m",
+  id: "aapl-paper",
   symbol: "AAPL",
   interval: "1m",
-  broker: new PaperEngine({ equity: 25_000 }),
+  broker,
   storage: new JsonFileStorage({ baseDir: "./output/live-state" }),
+  mode: "polling",
   riskPct: 1,
-  mode: "streaming",
   signal({ bar, openPosition }) {
     if (openPosition) return null;
+
     return {
       side: "long",
+      entry: bar.close,
       stop: bar.close - 1,
       rr: 2,
     };
@@ -56,43 +44,116 @@ const engine = new LiveEngine({
 });
 
 await engine.start();
-// ... run until shutdown condition
+await engine.pollOnce();
+console.log(engine.getStatus());
 await engine.stop();
 ```
 
-Important behavior:
+`PaperEngine` implements the broker interface in memory. Use it first for CLI runs, dashboard checks, and strategy wiring.
 
-- `signal()` is called with the same context shape as backtesting
-- `signal()` may be async; `LiveEngine` awaits the decision before normalizing it
-- market and limit/stop order lifecycles are tracked through broker events
-- state is persisted after fills, order updates, and equity updates
-- `getStatus()` returns runtime and risk state for health checks
+## Signal Contract
 
-Async/model-backed signals can use `LlmSignal` from the main package:
+The signal function receives:
+
+| Field          | Meaning                                        |
+| -------------- | ---------------------------------------------- |
+| `candles`      | Finalized candle history available at this bar |
+| `index`        | Current candle index                           |
+| `bar`          | Current candle                                 |
+| `equity`       | Current engine equity                          |
+| `openPosition` | Current open position, or `null`               |
+| `pendingOrder` | Current pending entry order, or `null`         |
+
+Return `null` to do nothing. Return an order intent to open a trade:
 
 ```js
-import { LlmSignal } from "tradelab";
-
-const llm = new LlmSignal({
-  budgetMs: 2000,
-  onError: "skip",
-  async resolve(context) {
-    // Call a model or agent here.
-    return null;
-  },
-});
-
-const engine = new LiveEngine({
-  symbol: "AAPL",
-  interval: "1m",
-  broker,
-  signal: llm.signal,
-});
+return {
+  side: "long",
+  entry: bar.close,
+  stop: bar.close * 0.98,
+  rr: 2,
+  riskPct: 0.5,
+};
 ```
 
-`LlmSignal` caches one decision per bar, passes a no-lookahead candle view to `resolve()`, and records decisions in `llm.log`. Use `backtestAsync()` to test the same signal before running it live.
+Useful fields:
 
-## `LiveOrchestrator` quick start
+| Field                | Meaning                                      |
+| -------------------- | -------------------------------------------- |
+| `side`               | `"long"`, `"short"`, `"buy"`, or `"sell"`    |
+| `entry`              | Planned entry price                          |
+| `stop`               | Stop loss price                              |
+| `takeProfit` or `rr` | Explicit target, or reward/risk multiple     |
+| `qty`                | Fixed quantity. If omitted, sizing uses risk |
+| `riskPct`            | Percent of equity to risk on this trade      |
+| `_maxBarsInTrade`    | Force an exit after this many completed bars |
+| `_maxHoldMin`        | Force an exit after this many minutes        |
+
+Use `backtest()` or `backtestAsync()` with the same signal before connecting a real broker.
+
+## Run From The CLI
+
+The CLI has two entry points:
+
+```bash
+tradelab paper --symbol AAPL --interval 1m --mode polling --once true
+tradelab live --symbol AAPL --interval 1m --broker alpaca --paper
+```
+
+Common options:
+
+| Option            | Meaning                                       |
+| ----------------- | --------------------------------------------- |
+| `--strategy`      | Built-in strategy name or local strategy file |
+| `--symbol`        | Symbol passed to broker and feed              |
+| `--interval`      | Candle interval, such as `1m`, `5m`, or `1d`  |
+| `--mode`          | `streaming` or `polling`                      |
+| `--once true`     | Run one polling cycle and exit                |
+| `--stateDir`      | Directory for persisted live state            |
+| `--dashboard`     | Start the local dashboard                     |
+| `--dashboardPort` | Dashboard port. Defaults to `4317`            |
+
+Strategy modules can export `default`, `createSignal(args)`, or `signal`:
+
+```js
+// ./strategies/ema-signal.js
+import { ema } from "tradelab";
+
+export function createSignal({ fast = 10, slow = 30, rr = 2 } = {}) {
+  return ({ candles, bar }) => {
+    if (candles.length < slow + 2) return null;
+
+    const closes = candles.map((candle) => candle.close);
+    const fastLine = ema(closes, Number(fast));
+    const slowLine = ema(closes, Number(slow));
+    const last = closes.length - 1;
+
+    if (fastLine[last - 1] <= slowLine[last - 1] && fastLine[last] > slowLine[last]) {
+      return {
+        side: "long",
+        entry: bar.close,
+        stop: Math.min(...candles.slice(-15).map((candle) => candle.low)),
+        rr: Number(rr),
+      };
+    }
+
+    return null;
+  };
+}
+```
+
+```bash
+tradelab paper \
+  --strategy ./strategies/ema-signal.js \
+  --symbol AAPL \
+  --interval 1m \
+  --mode polling \
+  --once true
+```
+
+## Run Multiple Systems
+
+Use `LiveOrchestrator` when several systems share one account and broker.
 
 ```js
 import { LiveOrchestrator, PaperEngine, JsonFileStorage } from "tradelab/live";
@@ -102,76 +163,17 @@ const orchestrator = new LiveOrchestrator({
   storage: new JsonFileStorage({ baseDir: "./output/live-state" }),
   allocation: "weight",
   systems: [
-    { id: "spy", symbol: "SPY", interval: "1m", weight: 2, signal: signalA },
-    { id: "qqq", symbol: "QQQ", interval: "1m", weight: 1, signal: signalB },
+    { id: "spy", symbol: "SPY", interval: "1m", weight: 2, signal: spySignal },
+    { id: "qqq", symbol: "QQQ", interval: "1m", weight: 1, signal: qqqSignal },
   ],
 });
 
 await orchestrator.start();
-const status = orchestrator.getStatus();
+console.log(orchestrator.getStatus());
 await orchestrator.stop();
 ```
 
-Use orchestrator when multiple systems should share one broker/account context.
-
-## CLI live commands
-
-| Command           | Purpose                                      |
-| ----------------- | -------------------------------------------- |
-| `tradelab live`   | Run live engine or orchestrator (`--config`) |
-| `tradelab paper`  | Shortcut for `live` with paper broker mode   |
-| `tradelab status` | Inspect persisted live state                 |
-
-## Live dashboard
-
-Use `createDashboardServer()` to watch a running `LiveEngine` or `LiveOrchestrator` locally. The dashboard serves a static page over `node:http`, streams live events with Server-Sent Events at `/events`, and reads current state from `/state`.
-
-```js
-import { createDashboardServer } from "tradelab/live";
-
-const dashboard = createDashboardServer({ source: engine, port: 4317 });
-const url = await dashboard.start();
-console.log(`dashboard: ${url}`);
-
-// Later, during shutdown:
-await dashboard.close();
-```
-
-The page shows equity, day PnL, open position, risk state, and a recent event tail for signals, fills, position changes, equity updates, and risk halts. New browser clients receive a bounded replay of recent events so the page is useful immediately after opening.
-
-The CLI can start the same dashboard for both single-engine and config/orchestrator runs:
-
-```bash
-tradelab paper --symbol AAPL --interval 1m --mode polling --dashboard --dashboardPort 4317
-tradelab live --config ./live-portfolio.json --paper --dashboard --dashboardPort 4317
-```
-
-The dashboard implementation is ESM-first. The CommonJS live bundle can be imported, but packaged dashboard usage should prefer `import { createDashboardServer } from "tradelab/live"`.
-
-### Single-system paper run
-
-```bash
-tradelab paper \
-  --id aapl-1m \
-  --symbol AAPL \
-  --interval 1m \
-  --mode polling \
-  --once true \
-  --stateDir ./output/live-state
-```
-
-### Orchestrator run from config
-
-```bash
-tradelab live \
-  --config ./live-portfolio.json \
-  --paper \
-  --mode polling \
-  --once true \
-  --stateDir ./output/live-state
-```
-
-Example config:
+CLI config:
 
 ```json
 {
@@ -182,56 +184,139 @@ Example config:
       "id": "spy-system",
       "symbol": "SPY",
       "interval": "1m",
-      "strategy": "./strategies/spySignal.js",
+      "strategy": "./strategies/spy.js",
       "weight": 2
     },
     {
       "id": "qqq-system",
       "symbol": "QQQ",
       "interval": "1m",
-      "strategy": "./strategies/qqqSignal.js",
+      "strategy": "./strategies/qqq.js",
       "weight": 1
     }
   ]
 }
 ```
 
-### State inspection
+```bash
+tradelab live --config ./live-portfolio.json --paper --mode polling --once true
+```
+
+## Dashboard
+
+Start a local dashboard for an engine or orchestrator:
+
+```js
+import { createDashboardServer } from "tradelab/live";
+
+const dashboard = createDashboardServer({ source: engine, port: 4317 });
+const url = await dashboard.start();
+
+console.log(url);
+
+// On shutdown:
+await dashboard.close();
+```
+
+The dashboard exposes:
+
+| Route     | Purpose                                   |
+| --------- | ----------------------------------------- |
+| `/`       | Static dashboard page                     |
+| `/state`  | Current status from `source.getStatus()`  |
+| `/events` | Server-Sent Events stream from `eventBus` |
+
+CLI:
+
+```bash
+tradelab paper --symbol AAPL --interval 1m --mode polling --dashboard --dashboardPort 4317
+tradelab live --config ./live-portfolio.json --paper --dashboard --dashboardPort 4317
+```
+
+The dashboard shows equity, day PnL, open position, risk state, and recent events. New browser clients receive a bounded replay of recent events.
+
+## State And Recovery
+
+`JsonFileStorage` stores one namespace per engine id:
+
+| File           | Contents                                  |
+| -------------- | ----------------------------------------- |
+| `state.json`   | Latest open position, pending order, risk |
+| `trades.jsonl` | Append-only completed trade records       |
+| `equity.jsonl` | Append-only equity snapshots              |
+
+Inspect persisted state:
 
 ```bash
 tradelab status --dir ./output/live-state
 tradelab status --dir ./output/live-state --namespace spy-system
 ```
 
-## State and recovery
+On restart, `StateManager` compares persisted state with broker positions and reports whether the state is clean, externally closed, adopted from broker state, or mismatched.
 
-Live state is namespaced and persisted as:
+## Risk Controls
 
-- `state.json` (latest engine state)
-- `trades.jsonl` (append-only)
-- `equity.jsonl` (append-only)
+Pass top-level risk options to `LiveEngine`, or group them under `risk`.
 
-On restart, the engine loads persisted state and reconciles with broker positions.
+```js
+const engine = new LiveEngine({
+  symbol: "AAPL",
+  interval: "1m",
+  broker,
+  signal,
+  riskPct: 0.5,
+  risk: {
+    maxDailyLossPct: 2,
+    maxDrawdownPct: 10,
+    maxPositions: 1,
+    maxDailyTrades: 4,
+    allowedWindows: "09:30-11:30,13:00-15:45",
+  },
+});
+```
 
-## Broker notes
+The risk manager can block new positions and emit warning or halt events. It does not silently change your signal logic.
 
-- Alpaca and Binance adapters support native paper modes.
-- Coinbase adapter is live API only; use `PaperEngine` for simulated Coinbase workflows.
-- Interactive Brokers adapter requires `@stoqey/ib` to be installed.
+## Broker Notes
 
-For runtime compatibility and options, see [types/live.d.ts](../types/live.d.ts).
+| Broker                     | Notes                                                    |
+| -------------------------- | -------------------------------------------------------- |
+| `PaperEngine`              | Local simulation. Best first step for any new strategy   |
+| `AlpacaBroker`             | Supports native paper mode through broker config         |
+| `BinanceBroker`            | Supports exchange-style crypto workflows                 |
+| `CoinbaseBroker`           | Live API adapter. Use `PaperEngine` for local simulation |
+| `InteractiveBrokersBroker` | Requires `@stoqey/ib` in the consuming application       |
 
-## Eventing and logs
+Real broker adapters require credentials and broker-specific account permissions. Start with paper mode, then use the smallest possible order sizes when switching to live credentials.
 
-`EventBus` emits lifecycle and execution events such as:
+## Events
 
-- `connected`, `shutdown`
+`EventBus` emits lifecycle, order, position, equity, and risk events:
+
+- `connected`
+- `shutdown`
 - `signal`
-- `order:submitted`, `order:filled`, `order:rejected`, `order:canceled`
-- `position:opened`, `position:closed`
+- `order:submitted`
+- `order:filled`
+- `order:rejected`
+- `order:canceled`
+- `position:opened`
+- `position:closed`
 - `equity:update`
-- `risk:warning`, `risk:halt`
+- `risk:warning`
+- `risk:halt`
 
-Attach `LiveLogger` for structured JSON logs.
+Attach `LiveLogger` to write structured JSON event logs.
 
-<small>[Back to main page](README.md)</small>
+```js
+import { createEventBus, createLogger } from "tradelab/live";
+
+const eventBus = createEventBus();
+const logger = createLogger({ level: "info" });
+
+logger.attach(eventBus);
+```
+
+See [api-reference.md](api-reference.md#live-module-tradelablive) for the full live export list.
+
+<small>[Back to docs](README.md)</small>
