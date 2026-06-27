@@ -3377,7 +3377,7 @@ function createDashboardServer({ source, port = 4317, maxBuffer = 200 }) {
 `;
     for (const res of clients) res.write(frame);
   });
-  const server = import_node_http.default.createServer((req, res) => {
+  const server = import_node_http.default.createServer(async (req, res) => {
     const url = (req.url || "/").split("?")[0];
     if (url === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -3385,9 +3385,50 @@ function createDashboardServer({ source, port = 4317, maxBuffer = 200 }) {
       return;
     }
     if (url === "/state") {
+      if (typeof source.refresh === "function") await source.refresh().catch(() => {
+      });
       const status = typeof source.getStatus === "function" ? source.getStatus() : {};
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(status));
+      return;
+    }
+    if (url === "/command" && req.method === "POST") {
+      const WHITELIST = {
+        flatten: "flatten",
+        stop: "stop",
+        closePosition: "closePosition",
+        cancelOrder: "cancelOrder"
+      };
+      let body = "";
+      req.on("data", (c) => body += c);
+      req.on("end", async () => {
+        let cmd;
+        try {
+          cmd = JSON.parse(body || "{}");
+        } catch {
+          cmd = {};
+        }
+        const method = WHITELIST[cmd.type];
+        if (!method || typeof source[method] !== "function") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: `unsupported command "${cmd.type}"` }));
+          return;
+        }
+        try {
+          const arg = cmd.type === "closePosition" ? cmd.symbol : cmd.type === "cancelOrder" ? cmd.orderId : void 0;
+          await source[method](arg);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ok: false,
+              error: error instanceof Error ? error.message : String(error)
+            })
+          );
+        }
+      });
       return;
     }
     if (url === "/events") {

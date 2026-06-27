@@ -218,13 +218,48 @@ console.log(url);
 await dashboard.close();
 ```
 
+The dashboard is a zero-dependency dark trading cockpit served from a single HTML file. It includes:
+
+- **KPI strip** - equity, day P&L (with percent), open position, last price, all in monospace tabular numerals
+- **Equity curve** - canvas chart that grows in real time; green when above session start, red when below
+- **Positions table** - symbol, side badge, qty, entry, mark, unrealized P&L
+- **Open orders table** - type, side, qty, price, with inline cancel
+- **Event feed** - color-coded by severity (fill, exit/warning, reject) with animated entry; capped at 120 rows
+- **Risk-halt banner** - shown when `source.getStatus().risk.halted` is true
+- **Controls** - Stop and Flatten All buttons in the header; cancel links in the orders table
+
 The dashboard exposes:
 
-| Route     | Purpose                                   |
-| --------- | ----------------------------------------- |
-| `/`       | Static dashboard page                     |
-| `/state`  | Current status from `source.getStatus()`  |
-| `/events` | Server-Sent Events stream from `eventBus` |
+| Route      | Method | Purpose                                                       |
+| ---------- | ------ | ------------------------------------------------------------- |
+| `/`        | GET    | Static dashboard page                                         |
+| `/state`   | GET    | Calls optional `source.refresh()`, then returns `getStatus()` |
+| `/events`  | GET    | Server-Sent Events stream from `eventBus`                     |
+| `/command` | POST   | Dispatch a command to the source (whitelist enforced)         |
+
+### `/command` endpoint
+
+Send a JSON body with a `type` field. Only the following types are accepted; anything else returns `400`:
+
+| type            | Source method called               |
+| --------------- | ---------------------------------- |
+| `flatten`       | `source.flatten()`                 |
+| `stop`          | `source.stop()`                    |
+| `closePosition` | `source.closePosition(cmd.symbol)` |
+| `cancelOrder`   | `source.cancelOrder(cmd.orderId)`  |
+
+```js
+// Example: flatten all positions from a browser
+await fetch("/command", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ type: "flatten" }),
+});
+```
+
+### `source.refresh()`
+
+If the source object exposes a `refresh()` method, the dashboard awaits it before each `/state` response. Use this to pull fresh data from a broker before painting the UI - for example, a `TradingSession` from the MCP live tools can expose `refresh()` to sync account state before every poll.
 
 CLI:
 
@@ -233,7 +268,7 @@ tradelab paper --symbol AAPL --interval 1m --mode polling --dashboard --dashboar
 tradelab live --config ./live-portfolio.json --paper --dashboard --dashboardPort 4317
 ```
 
-The dashboard shows equity, day PnL, open position, risk state, and recent events. New browser clients receive a bounded replay of recent events.
+New browser clients receive a bounded replay of recent events. The equity curve grows from the first data point seen in the session; the chart updates on every `equity:update` SSE event and on each `/state` poll.
 
 ## State And Recovery
 
