@@ -1,4 +1,17 @@
-# tradelab
+<div align="center">
+  <img src="https://i.imgur.com/HGvvQbq.png" width="420" alt="tradelab logo" />
+
+  <p><strong>A Node.js backtesting toolkit for serious trading strategy research.</strong></p>
+
+[![npm version](https://img.shields.io/npm/v/tradelab?color=0f172a&label=npm&logo=npm)](https://www.npmjs.com/package/tradelab)
+[![GitHub](https://img.shields.io/badge/github-ishsharm0/tradelab-0f172a?logo=github)](https://github.com/ishsharm0/tradelab)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0f172a)](https://github.com/ishsharm0/tradelab/blob/main/LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-0f172a?logo=node.js)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-ready-0f172a?logo=typescript)](https://github.com/ishsharm0/tradelab/blob/main/types/index.d.ts)
+
+</div>
+
+---
 
 A Node.js toolkit for testing, validating, and operating trading strategies.
 
